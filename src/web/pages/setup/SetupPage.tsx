@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
-import { ArrowLeft, Check, ChevronDown, CircleCheck, CircleX, Cloud, ExternalLink, KeyRound, LoaderCircle, Mail, RefreshCw, ShieldCheck, Sparkles, TriangleAlert } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, CircleCheck, CircleDashed, CircleX, Cloud, ExternalLink, KeyRound, LoaderCircle, Mail, RefreshCw, ShieldCheck, Sparkles, TriangleAlert } from 'lucide-react';
 import { ApiError, errorText, get, post } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { tokenTemplateUrl, TOKEN_PERMISSIONS } from '../../../shared/constants';
@@ -113,12 +113,15 @@ function CheckRow({ label, check, loading, children }: { label: string; check?: 
 function ChecksStage({ status, loading, error, refetch, onContinue }: { status?: SetupStatus; loading: boolean; error: unknown; refetch: () => void; onContinue: () => void }) {
   const qc = useQueryClient();
   const [showPerms, setShowPerms] = useState(false);
+  const [changingToken, setChangingToken] = useState(false);
   const c = status?.checks;
-  const required = status?.permissions.filter((p) => !p.optional) ?? [];
-  const missingRequired = required.filter((p) => !p.ok);
-  const missingOptional = status?.permissions.filter((p) => p.optional && !p.ok) ?? [];
+  const missing = status?.permissions.filter((p) => !p.ok && !p.untested) ?? [];
+  const missingRequired = missing.filter((p) => !p.optional);
+  const missingOptional = missing.filter((p) => p.optional);
+  const untested = status?.permissions.filter((p) => p.untested) ?? [];
   const ready = !!c && c.database.ok && c.encryptionKey.ok && c.cloudflare.ok && c.worker.ok && c.zones.ok && missingRequired.length === 0;
   const needsToken = !!c && c.database.ok && c.encryptionKey.ok && !c.cloudflare.ok;
+  const canChangeToken = !!c && c.cloudflare.ok && c.cloudflare.source === 'stored';
 
   useEffect(() => {
     if (status?.setupComplete) qc.invalidateQueries({ queryKey: ['session'] });
@@ -135,23 +138,47 @@ function ChecksStage({ status, loading, error, refetch, onContinue }: { status?:
         <CheckRow label="Encryption key" check={c?.encryptionKey} loading={loading} />
         <CheckRow label="Cloudflare connection" check={c?.cloudflare} loading={loading}>
           {needsToken && <TokenForm onSaved={refetch} />}
+          {canChangeToken && !changingToken && (
+            <button type="button" className="mt-1 text-[13px] text-primary hover:underline" onClick={() => setChangingToken(true)}>
+              Use a different token
+            </button>
+          )}
+          {canChangeToken && changingToken && (
+            <TokenForm
+              onSaved={() => {
+                setChangingToken(false);
+                refetch();
+              }}
+              onCancel={() => setChangingToken(false)}
+            />
+          )}
+          {c?.cloudflare.ok && c.cloudflare.source === 'secret' && (
+            <div className="mt-1 text-xs text-faint">From the CF_API_TOKEN secret. Change it in the Worker's Settings → Variables and Secrets.</div>
+          )}
         </CheckRow>
         <CheckRow label="This Worker" check={c?.worker} loading={loading} />
         <CheckRow label="Your domains" check={c?.zones} loading={loading}>
           {c?.zones.ok && <div className="mt-2 flex flex-wrap gap-1.5">{status?.zones.map((z) => <Badge key={z.id}>{z.name}</Badge>)}</div>}
+          {c?.cloudflare.ok && !c.zones.ok && c.zones.count === 0 && (
+            <a href="https://dash.cloudflare.com/?to=/:account/add-site" target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-[13px] text-primary hover:underline">
+              Add a domain to Cloudflare <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          )}
         </CheckRow>
         {!!status?.permissions.length && (
           <div className="px-5 py-3.5">
             <button type="button" className="flex w-full items-center gap-3 text-left" onClick={() => setShowPerms((s) => !s)}>
-              {missingRequired.length ? <CircleX className="h-5 w-5 text-danger" /> : missingOptional.length ? <TriangleAlert className="h-5 w-5 text-warning" /> : <ShieldCheck className="h-5 w-5 text-success" />}
+              {missingRequired.length ? <CircleX className="h-5 w-5 text-danger" /> : untested.length ? <CircleDashed className="h-5 w-5 text-muted" /> : missingOptional.length ? <TriangleAlert className="h-5 w-5 text-warning" /> : <ShieldCheck className="h-5 w-5 text-success" />}
               <div className="flex-1">
                 <div className="text-sm font-medium">Token permissions</div>
                 <div className="text-[13px] text-muted">
                   {missingRequired.length
                     ? `${missingRequired.length} required permission(s) missing.`
-                    : missingOptional.length
-                      ? `All required permissions present. ${missingOptional.length} optional one(s) missing; some extras will be unavailable.`
-                      : 'All permissions present.'}
+                    : untested.length
+                      ? 'No problems so far. Domain permissions are checked once a domain is in the account.'
+                      : missingOptional.length
+                        ? `All required permissions present. ${missingOptional.length} optional one(s) missing; some extras will be unavailable.`
+                        : 'All permissions present.'}
                 </div>
               </div>
               <ChevronDown className={cn('h-4 w-4 text-muted transition-transform', showPerms && 'rotate-180')} />
@@ -177,13 +204,16 @@ export function PermissionList({ permissions }: { permissions: PermissionCheck[]
     <div className="mt-3 overflow-hidden rounded-lg border border-border">
       {permissions.map((p) => (
         <div key={p.key} className="flex items-center gap-3 border-b border-border px-3 py-2 last:border-0">
-          {p.ok ? <Check className="h-4 w-4 text-success" /> : p.optional ? <TriangleAlert className="h-4 w-4 text-warning" /> : <CircleX className="h-4 w-4 text-danger" />}
+          {p.ok ? <Check className="h-4 w-4 text-success" /> : p.untested ? <CircleDashed className="h-4 w-4 text-faint" /> : p.optional ? <TriangleAlert className="h-4 w-4 text-warning" /> : <CircleX className="h-4 w-4 text-danger" />}
           <div className="min-w-0 flex-1">
             <div className="text-[13px]">
               <span className="text-muted">{p.scope} →</span> <span className="font-medium">{p.name}</span> <span className="text-muted">· {p.access}</span>
               {p.optional && <span className="ml-1.5 text-xs text-faint">(optional)</span>}
             </div>
-            <div className="text-xs text-muted">{p.why}</div>
+            <div className="text-xs text-muted">
+              {p.why}
+              {p.untested && <span className="text-faint"> · checked once you add a domain</span>}
+            </div>
           </div>
         </div>
       ))}
@@ -191,7 +221,7 @@ export function PermissionList({ permissions }: { permissions: PermissionCheck[]
   );
 }
 
-function TokenForm({ onSaved }: { onSaved: () => void }) {
+function TokenForm({ onSaved, onCancel }: { onSaved: () => void; onCancel?: () => void }) {
   const [token, setToken] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -235,6 +265,11 @@ function TokenForm({ onSaved }: { onSaved: () => void }) {
         <Button type="submit" variant="primary" loading={busy}>
           Connect
         </Button>
+        {onCancel && (
+          <Button type="button" variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+        )}
       </div>
     </form>
   );

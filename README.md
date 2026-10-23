@@ -27,7 +27,7 @@ You need a free Cloudflare account, a GitHub account, and a domain on Cloudflare
 
 **1. Click Deploy to Cloudflare** and fill in `ENCRYPTION_KEY`: a long random secret (e.g. `openssl rand -hex 32`). **Keep a copy.** You need it to claim the deployment and to recover the owner account.
 
-**2. Open the Worker's `workers.dev` address.** The setup page asks for a Cloudflare API token, which OpenInbox uses to set up Email Routing and DNS for you. Click **Create token**: Cloudflare opens with every permission filled in, so you only click **Continue to summary → Create Token** and paste the token back. It is stored encrypted.
+**2. Open the Worker's `workers.dev` address.** The setup page asks for a Cloudflare API token, which OpenInbox uses to set up Email Routing and DNS for you. Click **Create token**: Cloudflare opens with every permission filled in, so you only click **Continue to summary → Create Token** and paste the token back. It is stored encrypted. If the Worker shows no `workers.dev` URL, turn it on in the Worker's **Settings → Domains & Routes**.
 
 **3. Follow the setup page.** It checks the token's permissions, creates your admin account and connects your domain.
 

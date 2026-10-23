@@ -59,6 +59,19 @@ describe('first-run setup', () => {
     expect(overview.checklist.find((x: { id: string }) => x.id === 'provider').done).toBe(false);
   });
 
+  it('leaves zone permissions untested, not missing, when the account has no domains', async () => {
+    fake.state.zones = [];
+    const c = new Client();
+    await c.init();
+    const status = await c.get('/api/setup/status');
+    expect(status.checks.zones).toMatchObject({ ok: false, count: 0 });
+    const byKey = (k: string) => status.permissions.find((p: { key: string }) => p.key === k);
+    expect(byKey('dns')).toMatchObject({ ok: false, untested: true });
+    expect(byKey('email_routing_rules')).toMatchObject({ ok: false, untested: true });
+    expect(byKey('workers_scripts').ok).toBe(true);
+    expect(byKey('workers_scripts').untested).toBeUndefined();
+  });
+
   it('replaces foreign MX records only after confirmation, merging SPF', async () => {
     const c = new Client();
     await c.init();

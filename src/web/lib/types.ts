@@ -209,6 +209,7 @@ export interface PermissionCheck {
   why: string;
   optional: boolean;
   ok: boolean;
+  untested?: boolean;
   error?: string;
 }
 

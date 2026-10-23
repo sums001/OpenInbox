@@ -52,10 +52,15 @@ export interface PermissionCheck {
   why: string;
   optional: boolean;
   ok: boolean;
+  // Zone permissions can only be probed on a zone: with none in the account they stay unknown.
+  untested?: boolean;
   error?: string;
 }
 
-async function probe(fn: () => Promise<unknown>, okCodes: number[] = []): Promise<{ ok: boolean; error?: string }> {
+type ProbeResult = { ok: boolean; untested?: boolean; error?: string };
+const noZone: ProbeResult = { ok: false, untested: true, error: 'No zone to test with.' };
+
+async function probe(fn: () => Promise<unknown>, okCodes: number[] = []): Promise<ProbeResult> {
   try {
     await fn();
     return { ok: true };
@@ -68,13 +73,13 @@ async function probe(fn: () => Promise<unknown>, okCodes: number[] = []): Promis
 
 export async function checkPermissions(cf: Cloudflare, accountId: string, zoneId: string | null): Promise<PermissionCheck[]> {
   const day = new Date(Date.now() - 86_400_000).toISOString();
-  const probes: Record<string, () => Promise<{ ok: boolean; error?: string }>> = {
+  const probes: Record<string, () => Promise<ProbeResult>> = {
     zone: () => probe(() => cf.get('/zones?per_page=5')),
-    dns: () => (zoneId ? probe(() => cf.get(`/zones/${zoneId}/dns_records?per_page=5`)) : Promise.resolve({ ok: false, error: 'No zone to test with.' })),
+    dns: () => (zoneId ? probe(() => cf.get(`/zones/${zoneId}/dns_records?per_page=5`)) : Promise.resolve(noZone)),
     email_routing_rules: () =>
-      zoneId ? probe(() => cf.get(`/zones/${zoneId}/email/routing/rules?per_page=5`)) : Promise.resolve({ ok: false, error: 'No zone to test with.' }),
+      zoneId ? probe(() => cf.get(`/zones/${zoneId}/email/routing/rules?per_page=5`)) : Promise.resolve(noZone),
     workers_routes: () =>
-      zoneId ? probe(() => cf.get(`/zones/${zoneId}/workers/routes`)) : Promise.resolve({ ok: false, error: 'No zone to test with.' }),
+      zoneId ? probe(() => cf.get(`/zones/${zoneId}/workers/routes`)) : Promise.resolve(noZone),
     analytics: () =>
       zoneId
         ? probe(() =>
@@ -83,7 +88,7 @@ export async function checkPermissions(cf: Cloudflare, accountId: string, zoneId
               { z: zoneId, d: day },
             ),
           )
-        : Promise.resolve({ ok: false, error: 'No zone to test with.' }),
+        : Promise.resolve(noZone),
     workers_scripts: () => probe(() => cf.get(`/accounts/${accountId}/workers/scripts`)),
     email_routing_addresses: () => probe(() => cf.get(`/accounts/${accountId}/email/routing/addresses?per_page=5`)),
     account_analytics: () =>
