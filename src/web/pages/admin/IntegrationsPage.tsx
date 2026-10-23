@@ -5,7 +5,7 @@ import { del, get, patch, post, errorText } from '../../lib/api';
 import { num, timeAgo } from '../../lib/format';
 import { useAction, useInvalidate } from '../../lib/hooks';
 import { cn } from '../../lib/utils';
-import { PROVIDER_INFO, type ProviderType } from '../../../shared/constants';
+import { PROVIDER_INFO, tokenTemplateUrl, type ProviderType } from '../../../shared/constants';
 import type { PermissionCheck, ProviderInfo } from '../../lib/types';
 import { Button } from '../../components/ui/button';
 import { Field, Input, PasswordInput, SegmentedControl, Select } from '../../components/ui/form';
@@ -530,6 +530,9 @@ function CloudflareSection() {
                       </Button>
                     </div>
                   </Field>
+                  <a href={tokenTemplateUrl()} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-xs text-primary hover:underline">
+                    Create a token with every permission filled in <ExternalLink className="h-3 w-3" />
+                  </a>
                 </form>
               )}
             </div>

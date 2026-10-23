@@ -64,9 +64,6 @@
     "bindings": {
       "ENCRYPTION_KEY": {
         "description": "A long random secret (32+ characters) that encrypts the API keys OpenInbox stores. Generate one with `openssl rand -hex 32` or a password manager. **Keep a copy**: you paste it once on the setup page to prove the deployment is yours."
-      },
-      "CF_API_TOKEN": {
-        "description": "Cloudflare API token that lets OpenInbox set up Email Routing and DNS for your domains. [Create it here](https://dash.cloudflare.com/profile/api-tokens) with the permissions listed in the README (Zone: Zone Read, DNS Edit, Email Routing Rules Edit, Workers Routes Edit, Analytics Read; Account: Workers Scripts Edit, Email Routing Addresses Edit, Account Analytics Read, Account Settings Read)."
       }
     }
   }

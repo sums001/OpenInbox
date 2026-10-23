@@ -25,7 +25,14 @@
 
 You need a free Cloudflare account, a GitHub account, and a domain on Cloudflare's nameservers. Sending needs a free account with a provider, but receiving works without one.
 
-**1. Create a Cloudflare API token** at [My Profile → API Tokens](https://dash.cloudflare.com/profile/api-tokens) with these permissions:
+**1. Click Deploy to Cloudflare** and fill in `ENCRYPTION_KEY`: a long random secret (e.g. `openssl rand -hex 32`). **Keep a copy.** You need it to claim the deployment and to recover the owner account.
+
+**2. Open the Worker's `workers.dev` address.** The setup page asks for a Cloudflare API token, which OpenInbox uses to set up Email Routing and DNS for you. Click **Create token**: Cloudflare opens with every permission filled in, so you only click **Continue to summary → Create Token** and paste the token back. It is stored encrypted.
+
+**3. Follow the setup page.** It checks the token's permissions, creates your admin account and connects your domain.
+
+<details>
+<summary>The token's permissions (filled in for you by <a href="https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22zone%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22dns%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22email_routing_rules%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_routes%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22analytics%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22email_routing_addresses%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_analytics%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22account_settings%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22workers_r2%22%2C%22type%22%3A%22edit%22%7D%5D&accountId=*&zoneId=all&name=OpenInbox">this link</a>)</summary>
 
 | Scope | Permission | Access | |
 | --- | --- | --- | --- |
@@ -40,11 +47,7 @@ You need a free Cloudflare account, a GitHub account, and a domain on Cloudflare
 | Account | Account Analytics | Read | optional: usage on the dashboard |
 | Account | Workers R2 Storage | Edit | optional: attachments bucket |
 
-**2. Click Deploy to Cloudflare** and fill in the form:
-- `ENCRYPTION_KEY`: a long random secret (e.g. `openssl rand -hex 32`). **Keep a copy.** You need it to claim the deployment and to recover the owner account.
-- `CF_API_TOKEN`: the token from step 1.
-
-**3. Open the Worker's `workers.dev` address** and follow the setup page. It creates your admin account and connects your domain.
+</details>
 
 **4. Connect a sending provider** in Admin → Integrations.
 
