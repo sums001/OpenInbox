@@ -5,5 +5,8 @@
   "main": "../src/worker/index.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
-  "d1_databases": [{ "binding": "DB", "database_name": "openinbox", "database_id": "local-test" }]
+  "d1_databases": [
+    { "binding": "DB", "database_name": "openinbox", "database_id": "local-test" },
+    { "binding": "MIGRATE_DB", "database_name": "migrate-test", "database_id": "local-migrate-test" }
+  ]
 }

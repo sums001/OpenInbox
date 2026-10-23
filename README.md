@@ -25,9 +25,11 @@
 
 You need a free Cloudflare account, a GitHub account, and a domain on Cloudflare's nameservers. Sending needs a free account with a provider, but receiving works without one.
 
-**1. Click Deploy to Cloudflare** and fill in `ENCRYPTION_KEY`: a long random secret (e.g. `openssl rand -hex 32`). **Keep a copy.** You need it to claim the deployment and to recover the owner account.
+**1. Click Deploy to Cloudflare**, then **Deploy**. The form asks for nothing else; keep the default names or change them.
 
 **2. Open the Worker's `workers.dev` address.** The setup page asks for a Cloudflare API token, which OpenInbox uses to set up Email Routing and DNS for you. Click **Create token**: Cloudflare opens with every permission filled in, so you only click **Continue to summary → Create Token** and paste the token back. It is stored encrypted. If the Worker shows no `workers.dev` URL, turn it on in the Worker's **Settings → Domains & Routes**.
+
+Connecting the token creates your **recovery key** and shows it once. **Save it in a password manager.** You paste it to finish setup, and it is the only way back into the owner account if you lose your password.
 
 **3. Follow the setup page.** It checks the token's permissions, creates your admin account and connects your domain.
 
@@ -64,19 +66,19 @@ Mail is stored text-only by default. Attachments are kept only on messages under
 
 ## Updating
 
-In your copy of the repo on GitHub, run **Actions → Sync upstream → Run workflow**. It also runs weekly by itself. Cloudflare redeploys automatically and applies database migrations.
+In your copy of the repo on GitHub, run **Actions → Sync upstream → Run workflow**. It also runs weekly by itself. Cloudflare redeploys automatically, and the Worker applies any database migrations itself. Don't click the Deploy button again to update: it makes a second, separate instance.
 
 ## Troubleshooting
 
 - **Mail not arriving or not sending:** start with Admin → Domains → *Check health* and Admin → Mail flow.
-- **Locked out of the owner account:** on the sign-in page, choose *Owner locked out?* and enter the owner email and `ENCRYPTION_KEY`.
-- **First build failed with D1 error 7404:** click *Retry build* in the Cloudflare dashboard.
+- **Locked out of the owner account:** on the sign-in page, choose *Owner locked out?* and enter the owner email and your recovery key.
+- **"A repository with that name already exists" on the Deploy form:** an earlier deploy already made a repo with that name. Change **Project name** in the form, or update the existing instance instead (see Updating).
 
 ## Development
 
 ```sh
 npm ci
-cp .dev.vars.example .dev.vars   # then add the mock API lines below
+# create .dev.vars with the lines below
 npm run db:migrate:local
 npm run dev:mock                 # terminal 1: mock Cloudflare and provider APIs on :8790
 npm run dev                      # terminal 2: app on http://localhost:5173

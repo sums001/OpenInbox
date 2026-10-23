@@ -59,6 +59,58 @@ describe('first-run setup', () => {
     expect(overview.checklist.find((x: { id: string }) => x.id === 'provider').done).toBe(false);
   });
 
+  it('generates the recovery key when the deploy set none, and claims with it', async () => {
+    // A fresh deploy: no ENCRYPTION_KEY and no CF_API_TOKEN secret.
+    const c = new Client({ ENCRYPTION_KEY: undefined, CF_API_TOKEN: undefined });
+    await c.init();
+    let status = await c.get('/api/setup/status');
+    expect(status.checks.encryptionKey).toMatchObject({ ok: false, pending: true, state: 'missing' });
+    expect(status.checks.cloudflare.ok).toBe(false);
+    const claim = { zoneId: 'zone_example', localPart: 'admin', displayName: 'Admin', password: 'correct horse battery' };
+    expect(await c.status('POST', '/api/setup/claim', { ...claim, setupKey: 'anything' })).toBe(409);
+
+    // A token that can't see this Worker proves nothing, and sets no secret.
+    expect(await c.status('POST', '/api/setup/token', { token: 'not-a-valid-token-at-all' })).toBe(400);
+    fake.state.accounts = [{ id: 'acc_other', name: 'Someone else' }];
+    fake.state.subdomain = 'someone-else';
+    expect(await c.status('POST', '/api/setup/token', { token: 'valid-token-0123456789abcdef' })).toBe(400);
+    expect(fake.state.scripts.openinbox.secrets).toBeUndefined();
+    fake.reset();
+
+    const { recoveryKey } = await c.post('/api/setup/token', { token: 'valid-token-0123456789abcdef' });
+    expect(recoveryKey).toMatch(/^[0-9a-f]{64}$/);
+    expect(fake.state.scripts.openinbox.secrets).toEqual({ ENCRYPTION_KEY: recoveryKey });
+
+    // Until the new version with the secret is live, setup waits for it.
+    status = await c.get('/api/setup/status');
+    expect(status.checks.encryptionKey).toMatchObject({ ok: false, state: 'activating' });
+    expect(await c.status('POST', '/api/setup/claim', { ...claim, setupKey: recoveryKey })).toBe(409);
+
+    // The Worker now runs with the secret.
+    c.envOverride.ENCRYPTION_KEY = recoveryKey;
+    status = await c.get('/api/setup/status');
+    expect(status.checks.encryptionKey).toMatchObject({ ok: true, state: 'generated' });
+    expect(status.checks.cloudflare).toMatchObject({ ok: true, source: 'stored' });
+    expect(status.checks.worker).toMatchObject({ ok: true, name: 'openinbox' });
+
+    // Changing the token keeps the key; asking for a new key replaces it.
+    expect((await c.post('/api/setup/token', { token: 'valid-token-0123456789abcdef' })).recoveryKey).toBeNull();
+    const second = (await c.post('/api/setup/token', { token: 'valid-token-0123456789abcdef', newKey: true })).recoveryKey;
+    expect(second).toMatch(/^[0-9a-f]{64}$/);
+    expect(second).not.toBe(recoveryKey);
+    expect((await c.get('/api/setup/status')).checks.encryptionKey.state).toBe('activating');
+    c.envOverride.ENCRYPTION_KEY = second;
+
+    expect(await c.status('POST', '/api/setup/claim', { ...claim, setupKey: recoveryKey })).toBe(403);
+    expect((await c.post('/api/setup/claim', { ...claim, setupKey: second })).ok).toBe(true);
+    expect((await c.get('/api/auth/session')).user).toMatchObject({ email: 'admin@example.com', role: 'owner' });
+    // The recovery key is the owner's way back in.
+    await new Client({ ENCRYPTION_KEY: second, CF_API_TOKEN: undefined }).init();
+    const other = new Client({ ENCRYPTION_KEY: second, CF_API_TOKEN: undefined });
+    await other.init();
+    await other.post('/api/auth/recover', { email: 'admin@example.com', setupKey: second, newPassword: 'another long password' });
+  });
+
   it('leaves zone permissions untested, not missing, when the account has no domains', async () => {
     fake.state.zones = [];
     const c = new Client();

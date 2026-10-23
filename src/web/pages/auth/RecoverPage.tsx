@@ -6,7 +6,7 @@ import { Field, Input, PasswordInput } from '../../components/ui/form';
 import { Alert } from '../../components/ui/misc';
 import { AuthLayout } from './AuthLayout';
 
-// The owner proves control of the deployment with ENCRYPTION_KEY (the app's own inbox can't
+// The owner proves control of the deployment with the recovery key, ENCRYPTION_KEY (the app's own inbox can't
 // receive a reset link while they're locked out). Other users ask an admin to reset them.
 export function RecoverPage() {
   const navigate = useNavigate();
@@ -46,7 +46,7 @@ export function RecoverPage() {
           <Field label="Owner email" id="email">
             <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
           </Field>
-          <Field label="ENCRYPTION_KEY" id="key" hint="The secret you entered on the Deploy to Cloudflare form.">
+          <Field label="Recovery key" id="key" hint="The key shown once during setup. It is the Worker's ENCRYPTION_KEY secret.">
             <PasswordInput id="key" required value={key} onChange={(e) => setKey(e.target.value)} />
           </Field>
           <Field label="New password" id="password">

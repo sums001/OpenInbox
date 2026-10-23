@@ -1,6 +1,6 @@
-// Bindings and variables. Secrets come from the Deploy button form (see .dev.vars.example);
-// the *_API_BASE overrides exist only for local development and tests, which point every
-// external API at a mock server.
+// Bindings and variables. The deploy asks for no secrets: setup generates ENCRYPTION_KEY and
+// saves it to the Worker through the API (services/setup.ts). The *_API_BASE overrides exist only
+// for local development and tests, which point every external API at a mock server.
 export interface Env {
   DB: D1Database;
   ENCRYPTION_KEY?: string;

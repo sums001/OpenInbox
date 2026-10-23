@@ -21,6 +21,7 @@ export interface AppSettings {
   spamPolicy: SpamPolicy;
   remoteImages: RemoteImagesPolicy;
   keyCheck: string | null; // a known value encrypted at setup, to detect a changed ENCRYPTION_KEY
+  keyGeneratedAt: number | null; // set when setup generated ENCRYPTION_KEY instead of the deployer
 }
 
 const KEYS: Record<keyof AppSettings, string> = {
@@ -41,9 +42,10 @@ const KEYS: Record<keyof AppSettings, string> = {
   spamPolicy: 'mail.spam_policy',
   remoteImages: 'mail.remote_images',
   keyCheck: 'crypto.key_check',
+  keyGeneratedAt: 'crypto.key_generated_at',
 };
 
-const NUMERIC = new Set<keyof AppSettings>(['setupCompletedAt', 'maxInboundMb', 'trashRetentionDays', 'spamRetentionDays']);
+const NUMERIC = new Set<keyof AppSettings>(['setupCompletedAt', 'keyGeneratedAt', 'maxInboundMb', 'trashRetentionDays', 'spamRetentionDays']);
 
 const DEFAULTS: AppSettings = {
   setupCompletedAt: null,
@@ -63,6 +65,7 @@ const DEFAULTS: AppSettings = {
   spamPolicy: DEFAULT_SETTINGS.spamPolicy,
   remoteImages: DEFAULT_SETTINGS.remoteImages,
   keyCheck: null,
+  keyGeneratedAt: null,
 };
 
 const TTL = 10_000;

@@ -2,7 +2,9 @@
 // wrangler.jsonc sends only /api/* here (run_worker_first).
 import { Hono } from 'hono';
 import type { AppBindings } from './types';
-import { HttpError } from './lib/errors';
+import type { Env } from './env';
+import { errorMessage, HttpError } from './lib/errors';
+import { ensureMigrated } from './db/migrate';
 import { EncryptionKeyError } from './lib/crypto';
 import { CfError } from './cloudflare/client';
 import { ProviderError } from './providers/types';
@@ -53,11 +55,22 @@ app.use('*', async (c, next) => {
 
 app.get('/health', (c) => c.json({ ok: true, version: __APP_VERSION__ }));
 
+async function migrated(env: Env): Promise<void> {
+  if (!env.DB) throw new HttpError(500, 'no_database', 'This Worker has no D1 database bound as DB. Redeploy it from its repository so Cloudflare creates one.');
+  try {
+    await ensureMigrated(env.DB);
+  } catch (e) {
+    logError('db.migrate_failed', e);
+    throw new HttpError(500, 'migration_failed', errorMessage(e));
+  }
+}
+
 app.use('*', csrfProtection);
 
 // Session and the setup gate: until the owner claims the instance, only setup and session
 // endpoints answer.
 app.use('*', async (c, next) => {
+  await migrated(c.env);
   c.set('settings', await loadSettings(c.env.DB));
   const path = c.req.path;
   if (path.startsWith('/api/webhooks/')) return next();

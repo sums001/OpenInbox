@@ -24,7 +24,7 @@ export interface FakeState {
   tokens: string[];
   accounts: { id: string; name: string }[];
   subdomain: string;
-  scripts: Record<string, { d1: string }>;
+  scripts: Record<string, { d1: string; secrets?: Record<string, string> }>;
   zones: { id: string; name: string; status: string }[];
   dns: Record<string, FakeRecord[]>;
   routing: Record<string, { enabled: boolean; status: string }>;
@@ -141,6 +141,12 @@ function cloudflare(state: FakeState, req: Request, url: URL, path: string, body
   }
   if (/^\/accounts\/[^/]+\/workers\/subdomain$/.test(path)) return ok({ subdomain: state.subdomain });
   if (/^\/accounts\/[^/]+\/workers\/scripts$/.test(path)) return ok(Object.keys(state.scripts).map((s) => ({ id: s })));
+  if ((r = /^\/accounts\/[^/]+\/workers\/scripts\/([^/]+)\/secrets$/.exec(path)) && m === 'PUT') {
+    const s = state.scripts[r[1]];
+    if (!s) return fail(404, 10007, 'workers.api.error.script_not_found');
+    (s.secrets ??= {})[body.name] = body.text;
+    return ok({ name: body.name, type: body.type });
+  }
   if ((r = /^\/accounts\/[^/]+\/workers\/scripts\/([^/]+)\/settings$/.exec(path))) {
     const s = state.scripts[r[1]];
     return s ? ok({ bindings: [{ type: 'd1', name: 'DB', id: s.d1 }] }) : fail(404, 10007, 'workers.api.error.script_not_found');

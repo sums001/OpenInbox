@@ -1,12 +1,16 @@
 // Drives the Worker like a browser (cookies, CSRF header) and like Email Routing (email()).
 import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
 import worker from '../../src/worker/index';
+import type { Env } from '../../src/worker/env';
 
 export const ORIGIN = 'https://openinbox.tester.workers.dev';
 export const ENCRYPTION_KEY = 'test-encryption-key-0123456789abcdef0123456789abcdef';
 
 export class Client {
   cookies = new Map<string, string>();
+
+  // Bindings that differ from the test defaults, e.g. a deployment without ENCRYPTION_KEY.
+  constructor(public envOverride: Partial<Env> = {}) {}
 
   async request(method: string, path: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<Response> {
     const headers = new Headers({ Origin: ORIGIN, ...extraHeaders });
@@ -20,7 +24,7 @@ export class Client {
       body: body === undefined ? undefined : body instanceof Uint8Array ? body : JSON.stringify(body),
     });
     const ctx = createExecutionContext();
-    const res = await worker.fetch(req, env, ctx);
+    const res = await worker.fetch(req, { ...env, ...this.envOverride }, ctx);
     await waitOnExecutionContext(ctx);
     for (const cookie of res.headers.getSetCookie()) {
       const [pair] = cookie.split(';');

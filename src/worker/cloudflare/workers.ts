@@ -54,6 +54,8 @@ export async function detectWorker(cf: Cloudflare, host: string, nameOverride?: 
         // not this account
       }
     }
+    // The subdomain names the account. A same-named Worker in another account is someone else's.
+    if (!account) throw new Error(`None of the accounts this token can see owns ${subdomain}.workers.dev.`);
   } else if (!workerName) {
     // Reached through a custom domain: ask each account which Worker serves this hostname.
     for (const a of accounts) {
@@ -93,6 +95,11 @@ export async function detectWorker(cf: Cloudflare, host: string, nameOverride?: 
     }
   }
   throw new Error(`Worker "${workerName}" was not found in the accounts this token can see.`);
+}
+
+// Setting a secret deploys a new version of the Worker with it. Later deploys keep it.
+export async function putWorkerSecret(cf: Cloudflare, accountId: string, worker: string, name: string, text: string): Promise<void> {
+  await cf.request('PUT', `/accounts/${accountId}/workers/scripts/${worker}/secrets`, { name, text, type: 'secret_text' });
 }
 
 export interface CustomDomain {

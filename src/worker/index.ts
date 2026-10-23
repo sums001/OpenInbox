@@ -5,12 +5,14 @@ import { app } from './app';
 import { handleEmail } from './services/inbound';
 import { handleScheduled } from './cron';
 import { logError } from './lib/log';
+import { ensureMigrated } from './db/migrate';
 
 export default {
   fetch: app.fetch,
 
   async email(message, env, ctx) {
     try {
+      await ensureMigrated(env.DB);
       await handleEmail(message, env, ctx);
     } catch (e) {
       // Rethrowing makes Email Routing answer with a temporary failure, so the sending server
@@ -21,6 +23,6 @@ export default {
   },
 
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(handleScheduled(controller, env));
+    ctx.waitUntil(ensureMigrated(env.DB).then(() => handleScheduled(controller, env)));
   },
 } satisfies ExportedHandler<Env>;

@@ -9,11 +9,11 @@ test/fixtures/generated/
 # Secrets: local dev vars, live-test credentials, private notes
 .dev.vars
 .dev.vars.*
-!.dev.vars.example
 .env
 .env.*
 .live.env
 docs/creds.txt
+/deploy
 
 *.log
 .DS_Store

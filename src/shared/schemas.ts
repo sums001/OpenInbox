@@ -5,14 +5,17 @@ import { LABEL_COLORS, PROVIDER_TYPES } from './constants';
 export const address = z.object({ name: z.string().max(200).default(''), address: z.string().trim().min(3).max(254) });
 const id = z.coerce.number().int().positive();
 
-export const setupTokenSchema = z.object({ token: z.string().trim().min(20, 'That does not look like a Cloudflare API token.').max(200) });
+export const setupTokenSchema = z.object({
+  token: z.string().trim().min(20, 'That does not look like a Cloudflare API token.').max(200),
+  newKey: z.boolean().default(false),
+});
 
 export const claimSchema = z.object({
   zoneId: z.string().min(10).max(64),
   localPart: z.string().trim().min(1).max(64),
   displayName: z.string().trim().min(1, 'Enter your name.').max(100),
   password: z.string().min(10, 'Use at least 10 characters.').max(256),
-  setupKey: z.string().min(1, 'Paste your ENCRYPTION_KEY.').max(500),
+  setupKey: z.string().min(1, 'Paste your recovery key.').max(500),
   replaceMx: z.boolean().default(false),
 });
 

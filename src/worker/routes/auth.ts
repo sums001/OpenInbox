@@ -102,7 +102,7 @@ auth.post('/recover', async (c) => {
   const keyOk = !!c.env.ENCRYPTION_KEY && (await safeEqual(setupKey.trim(), c.env.ENCRYPTION_KEY));
   if (!owner || !keyOk || owner.email !== email.trim().toLowerCase()) {
     await recordFailure(c.env.DB, clientIpKey('recover', ip), KEY_CHECK_PER_IP);
-    throw new HttpError(403, 'recover_failed', 'The owner email or ENCRYPTION_KEY is wrong.');
+    throw new HttpError(403, 'recover_failed', 'The owner email or recovery key is wrong.');
   }
   await changePassword(c.env.DB, owner.id, newPassword);
   await c.env.DB.prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL, recovery_codes = NULL, status = ? WHERE id = ?').bind('active', owner.id).run();

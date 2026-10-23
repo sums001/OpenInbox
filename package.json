@@ -59,12 +59,5 @@
     "vite": "^8.3.4",
     "vitest": "~4.1.12",
     "wrangler": "^4.151.3"
-  },
-  "cloudflare": {
-    "bindings": {
-      "ENCRYPTION_KEY": {
-        "description": "A long random secret (32+ characters) that encrypts the API keys OpenInbox stores. Generate one with `openssl rand -hex 32` or a password manager. **Keep a copy**: you paste it once on the setup page to prove the deployment is yours."
-      }
-    }
   }
 }

@@ -1,28 +1,31 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
-import { ArrowLeft, Check, ChevronDown, CircleCheck, CircleDashed, CircleX, Cloud, ExternalLink, KeyRound, LoaderCircle, Mail, RefreshCw, ShieldCheck, Sparkles, TriangleAlert } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, CircleCheck, CircleDashed, CircleX, Cloud, Download, ExternalLink, KeyRound, LoaderCircle, Mail, RefreshCw, ShieldCheck, Sparkles, TriangleAlert } from 'lucide-react';
 import { ApiError, errorText, get, post } from '../../lib/api';
-import { cn } from '../../lib/utils';
+import { cn, downloadBlob } from '../../lib/utils';
 import { tokenTemplateUrl, TOKEN_PERMISSIONS } from '../../../shared/constants';
 import type { DomainSetupStep, PermissionCheck, ZoneInspection } from '../../lib/types';
 import { LogoMark } from '../../components/Logo';
 import { Button } from '../../components/ui/button';
 import { Checkbox, Field, Input, PasswordInput, Select } from '../../components/ui/form';
-import { Alert, Badge, Card } from '../../components/ui/misc';
+import { Alert, Badge, Card, CopyButton } from '../../components/ui/misc';
 import { PasswordStrength } from '../../components/PasswordStrength';
 
 interface Check {
   ok: boolean;
   message: string;
   warning?: boolean;
+  pending?: boolean;
 }
+
+type KeyState = 'missing' | 'activating' | 'generated' | 'set';
 
 interface SetupStatus {
   setupComplete: boolean;
   checks: {
     database: Check;
-    encryptionKey: Check;
+    encryptionKey: Check & { state: KeyState };
     cloudflare: Check & { source: 'secret' | 'stored' | null };
     worker: Check & { name?: string; subdomain?: string | null; accountName?: string };
     zones: Check & { count: number };
@@ -36,7 +39,15 @@ type Stage = 'checks' | 'admin' | 'domain' | 'done';
 export function SetupPage() {
   const [stage, setStage] = useState<Stage>('checks');
   const [claim, setClaim] = useState<{ domainId: number; address: string; domain: string } | null>(null);
-  const status = useQuery({ queryKey: ['setup-status'], queryFn: () => get<SetupStatus>('/setup/status'), retry: false });
+  // The generated recovery key, kept only in this page's memory: the server shows it once.
+  const [recoveryKey, setRecoveryKey] = useState<string | null>(null);
+  const status = useQuery({
+    queryKey: ['setup-status'],
+    queryFn: () => get<SetupStatus>('/setup/status'),
+    retry: false,
+    // A new key reaches the Worker within seconds; check until it has.
+    refetchInterval: (q) => (q.state.data?.checks.encryptionKey.state === 'activating' ? 2000 : false),
+  });
 
   const steps: { id: Stage; label: string }[] = [
     { id: 'checks', label: 'Check deployment' },
@@ -70,10 +81,21 @@ export function SetupPage() {
           ))}
         </ol>
 
-        {stage === 'checks' && <ChecksStage status={status.data} loading={status.isFetching} error={status.error} refetch={() => status.refetch()} onContinue={() => setStage('admin')} />}
+        {stage === 'checks' && (
+          <ChecksStage
+            status={status.data}
+            loading={status.isFetching}
+            error={status.error}
+            refetch={() => status.refetch()}
+            recoveryKey={recoveryKey}
+            onRecoveryKey={setRecoveryKey}
+            onContinue={() => setStage('admin')}
+          />
+        )}
         {stage === 'admin' && status.data && (
           <AdminStage
             zones={status.data.zones}
+            keyState={status.data.checks.encryptionKey.state}
             onBack={() => setStage('checks')}
             onClaimed={(c) => {
               setClaim(c);
@@ -91,6 +113,8 @@ export function SetupPage() {
 function CheckRow({ label, check, loading, children }: { label: string; check?: Check; loading: boolean; children?: ReactNode }) {
   const icon = loading && !check ? (
     <LoaderCircle className="h-5 w-5 animate-spin text-muted" />
+  ) : check?.pending ? (
+    <CircleDashed className="h-5 w-5 text-muted" />
   ) : check?.ok && !check.warning ? (
     <CircleCheck className="h-5 w-5 text-success" />
   ) : check?.ok ? (
@@ -110,18 +134,40 @@ function CheckRow({ label, check, loading, children }: { label: string; check?: 
   );
 }
 
-function ChecksStage({ status, loading, error, refetch, onContinue }: { status?: SetupStatus; loading: boolean; error: unknown; refetch: () => void; onContinue: () => void }) {
+function ChecksStage({
+  status,
+  loading,
+  error,
+  refetch,
+  recoveryKey,
+  onRecoveryKey,
+  onContinue,
+}: {
+  status?: SetupStatus;
+  loading: boolean;
+  error: unknown;
+  refetch: () => void;
+  recoveryKey: string | null;
+  onRecoveryKey: (key: string) => void;
+  onContinue: () => void;
+}) {
   const qc = useQueryClient();
   const [showPerms, setShowPerms] = useState(false);
   const [changingToken, setChangingToken] = useState(false);
+  const [replacingKey, setReplacingKey] = useState(false);
   const c = status?.checks;
   const missing = status?.permissions.filter((p) => !p.ok && !p.untested) ?? [];
   const missingRequired = missing.filter((p) => !p.optional);
   const missingOptional = missing.filter((p) => p.optional);
   const untested = status?.permissions.filter((p) => p.untested) ?? [];
+  const keyState = c?.encryptionKey.state;
   const ready = !!c && c.database.ok && c.encryptionKey.ok && c.cloudflare.ok && c.worker.ok && c.zones.ok && missingRequired.length === 0;
-  const needsToken = !!c && c.database.ok && c.encryptionKey.ok && !c.cloudflare.ok;
+  const needsToken = !!c && c.database.ok && keyState !== 'activating' && !c.cloudflare.ok;
   const canChangeToken = !!c && c.cloudflare.ok && c.cloudflare.source === 'stored';
+  const saved = (key: string | null) => {
+    if (key) onRecoveryKey(key);
+    refetch();
+  };
 
   useEffect(() => {
     if (status?.setupComplete) qc.invalidateQueries({ queryKey: ['session'] });
@@ -135,9 +181,26 @@ function ChecksStage({ status, loading, error, refetch, onContinue }: { status?:
     <div className="space-y-4">
       <Card className="divide-y divide-border overflow-hidden">
         <CheckRow label="Database" check={c?.database} loading={loading} />
-        <CheckRow label="Encryption key" check={c?.encryptionKey} loading={loading} />
+        <CheckRow label="Recovery key" check={c?.encryptionKey} loading={loading}>
+          {recoveryKey && keyState !== 'set' && <RecoveryKey value={recoveryKey} />}
+          {!recoveryKey && keyState === 'generated' && !replacingKey && (
+            <button type="button" className="mt-1 text-[13px] text-primary hover:underline" onClick={() => setReplacingKey(true)}>
+              Didn't save the key? Create a new one
+            </button>
+          )}
+          {!recoveryKey && keyState === 'generated' && replacingKey && (
+            <TokenForm
+              newKey
+              onSaved={(key) => {
+                setReplacingKey(false);
+                saved(key);
+              }}
+              onCancel={() => setReplacingKey(false)}
+            />
+          )}
+        </CheckRow>
         <CheckRow label="Cloudflare connection" check={c?.cloudflare} loading={loading}>
-          {needsToken && <TokenForm onSaved={refetch} />}
+          {needsToken && <TokenForm createsKey={keyState === 'missing'} onSaved={saved} />}
           {canChangeToken && !changingToken && (
             <button type="button" className="mt-1 text-[13px] text-primary hover:underline" onClick={() => setChangingToken(true)}>
               Use a different token
@@ -145,9 +208,9 @@ function ChecksStage({ status, loading, error, refetch, onContinue }: { status?:
           )}
           {canChangeToken && changingToken && (
             <TokenForm
-              onSaved={() => {
+              onSaved={(key) => {
                 setChangingToken(false);
-                refetch();
+                saved(key);
               }}
               onCancel={() => setChangingToken(false)}
             />
@@ -221,7 +284,45 @@ export function PermissionList({ permissions }: { permissions: PermissionCheck[]
   );
 }
 
-function TokenForm({ onSaved, onCancel }: { onSaved: () => void; onCancel?: () => void }) {
+// The recovery key the deploy used to ask for: shown once, right after connecting the token
+// generated it.
+function RecoveryKey({ value }: { value: string }) {
+  return (
+    <div className="mt-3 space-y-3 rounded-lg border border-warning/40 bg-warning-soft p-4">
+      <div className="flex items-start gap-2 text-[13px]">
+        <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+        <div>
+          <div className="font-medium text-fg">Save your recovery key now</div>
+          <div className="mt-0.5 text-muted">
+            It is shown only this once. You paste it in the next step, and you need it to get back in if you lose your password. Keep it in a password manager.
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <code data-testid="recovery-key" className="min-w-0 flex-1 break-all rounded-md border border-border bg-surface px-3 py-2 font-mono text-[13px] select-all">
+          {value}
+        </code>
+        <div className="flex gap-1">
+          <CopyButton text={value} />
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted hover:bg-surface-2 hover:text-fg"
+            onClick={() =>
+              downloadBlob(
+                new Blob([`OpenInbox recovery key (ENCRYPTION_KEY) for ${location.host}\n\n${value}\n`], { type: 'text/plain' }),
+                'openinbox-recovery-key.txt',
+              )
+            }
+          >
+            <Download className="h-3.5 w-3.5" /> Download
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TokenForm({ onSaved, onCancel, newKey = false, createsKey = false }: { onSaved: (recoveryKey: string | null) => void; onCancel?: () => void; newKey?: boolean; createsKey?: boolean }) {
   const [token, setToken] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -230,8 +331,8 @@ function TokenForm({ onSaved, onCancel }: { onSaved: () => void; onCancel?: () =
     setBusy(true);
     setError('');
     try {
-      await post('/setup/token', { token });
-      onSaved();
+      const r = await post<{ recoveryKey: string | null }>('/setup/token', { token, newKey });
+      onSaved(r.recoveryKey);
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -241,7 +342,10 @@ function TokenForm({ onSaved, onCancel }: { onSaved: () => void; onCancel?: () =
   return (
     <form onSubmit={submit} className="mt-3 space-y-3 rounded-lg border border-border bg-surface-2 p-4">
       <p className="text-[13px] text-muted">
-        OpenInbox uses a Cloudflare API token to set up Email Routing and DNS for you. Create one with these permissions, then paste it here. It is stored encrypted.
+        {newKey
+          ? 'Paste your Cloudflare API token again to prove this deployment is yours. A new recovery key replaces the old one.'
+          : 'OpenInbox uses a Cloudflare API token to set up Email Routing and DNS for you. Create one with these permissions, then paste it here. It is stored encrypted.'}
+        {createsKey && ' Connecting also creates your recovery key.'}
       </p>
       <div className="flex flex-wrap gap-2">
         <a href={tokenTemplateUrl()} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-fg hover:bg-primary-hover">
@@ -275,7 +379,17 @@ function TokenForm({ onSaved, onCancel }: { onSaved: () => void; onCancel?: () =
   );
 }
 
-function AdminStage({ zones, onBack, onClaimed }: { zones: SetupStatus['zones']; onBack: () => void; onClaimed: (c: { domainId: number; address: string; domain: string }) => void }) {
+function AdminStage({
+  zones,
+  keyState,
+  onBack,
+  onClaimed,
+}: {
+  zones: SetupStatus['zones'];
+  keyState: KeyState;
+  onBack: () => void;
+  onClaimed: (c: { domainId: number; address: string; domain: string }) => void;
+}) {
   const [zoneId, setZoneId] = useState(zones.find((z) => z.status === 'active')?.id ?? zones[0]?.id ?? '');
   const [localPart, setLocalPart] = useState('admin');
   const [name, setName] = useState('');
@@ -364,13 +478,17 @@ function AdminStage({ zones, onBack, onClaimed }: { zones: SetupStatus['zones'];
           <Field
             label={
               <span className="inline-flex items-center gap-1.5">
-                <KeyRound className="h-4 w-4 text-primary" /> Prove this deployment is yours
+                <KeyRound className="h-4 w-4 text-primary" /> Recovery key
               </span>
             }
             id="key"
-            hint="Paste the ENCRYPTION_KEY you entered on the Deploy to Cloudflare form. Lost it? Set a new one in the Worker's Settings → Variables and Secrets; nothing is encrypted yet."
+            hint={
+              keyState === 'set'
+                ? 'Paste the ENCRYPTION_KEY set for this Worker. It proves the deployment is yours.'
+                : 'Paste the recovery key from the previous step to confirm you saved it. Lost it? Go back and create a new one.'
+            }
           >
-            <PasswordInput id="key" value={setupKey} onChange={(e) => setSetupKey(e.target.value)} required placeholder="ENCRYPTION_KEY" />
+            <PasswordInput id="key" value={setupKey} onChange={(e) => setSetupKey(e.target.value)} required placeholder={keyState === 'set' ? 'ENCRYPTION_KEY' : 'Recovery key'} />
           </Field>
         </div>
         <div className="flex items-center justify-between pt-1">

@@ -6,11 +6,10 @@ import { claimSchema, setupTokenSchema } from '../../shared/schemas';
 import { isSetupComplete, loadSettings } from '../db/settings';
 import { conflict, HttpError } from '../lib/errors';
 import { safeEqual } from '../lib/crypto';
-import { setupStatus, saveToken } from '../services/setup';
+import { connectToken, keyState, setupStatus } from '../services/setup';
 import { claimInstance } from '../services/users';
 import { inspectZone } from '../services/domains';
-import { Cloudflare, cfFromEnv, DEFAULT_CF_API } from '../cloudflare/client';
-import { verifyToken } from '../cloudflare/token';
+import { cfFromEnv } from '../cloudflare/client';
 import { createSession } from '../auth/session';
 import { assertNotLimited, clientIpKey, KEY_CHECK_PER_IP, recordFailure } from '../auth/rate-limit';
 import { clientIp } from '../auth/middleware';
@@ -27,12 +26,12 @@ setup.get('/status', async (c) => {
   return c.json(status);
 });
 
+// Returns the generated recovery key (ENCRYPTION_KEY) when connecting the token created one. This
+// is the only time it is shown.
 setup.post('/token', async (c) => {
-  const { token } = await body(c, setupTokenSchema);
-  const check = await verifyToken(new Cloudflare(token, c.env.CF_API_BASE || DEFAULT_CF_API));
-  if (!check.valid) throw new HttpError(400, 'invalid_token', check.message ?? 'Cloudflare rejected this token.');
-  await saveToken(c.env, token);
-  return c.json({ ok: true });
+  const { token, newKey } = await body(c, setupTokenSchema);
+  const { recoveryKey } = await connectToken(c.env, new URL(c.req.url).host, token, newKey);
+  return c.json({ ok: true, recoveryKey });
 });
 
 setup.get('/zones/:zoneId', async (c) => {
@@ -46,11 +45,14 @@ setup.post('/claim', async (c) => {
   const input = await body(c, claimSchema);
   const ip = clientIp(c);
   await assertNotLimited(c.env.DB, clientIpKey('setup', ip), KEY_CHECK_PER_IP);
-  if (!c.env.ENCRYPTION_KEY || !(await safeEqual(input.setupKey.trim(), c.env.ENCRYPTION_KEY))) {
-    await recordFailure(c.env.DB, clientIpKey('setup', ip), KEY_CHECK_PER_IP);
-    throw new HttpError(403, 'bad_setup_key', 'That is not the ENCRYPTION_KEY of this deployment.');
-  }
   const settings = await loadSettings(c.env.DB, true);
+  const state = await keyState(c.env, settings);
+  if (state === 'missing') throw new HttpError(409, 'no_key', 'Connect Cloudflare first: that creates your recovery key.');
+  if (state === 'activating') throw new HttpError(409, 'key_pending', 'The recovery key is still being saved to the Worker. Try again in a few seconds.');
+  if (!(await safeEqual(input.setupKey.trim(), c.env.ENCRYPTION_KEY ?? ''))) {
+    await recordFailure(c.env.DB, clientIpKey('setup', ip), KEY_CHECK_PER_IP);
+    throw new HttpError(403, 'bad_setup_key', state === 'generated' ? 'That is not the recovery key shown during setup.' : 'That is not the ENCRYPTION_KEY of this deployment.');
+  }
   if (!settings.cfWorkerName) throw new HttpError(409, 'worker_unknown', 'Finish the checks above first.');
   const cf = await cfFromEnv(c.env, settings);
   if (!cf) throw new HttpError(409, 'no_cf_token', 'Connect a Cloudflare token first.');
