@@ -149,7 +149,10 @@ export function Composer({
     autofocus: variant === 'inline' ? 'start' : false,
     onUpdate: ({ editor: e }) => {
       dirty.current = true;
-      setState((s) => ({ ...s, html: e.getHTML() }));
+      // Read the HTML now: React runs updaters later, when this editor instance may already be
+      // destroyed (StrictMode remounts it), and getHTML() on a destroyed editor throws.
+      const html = e.getHTML();
+      setState((s) => ({ ...s, html }));
     },
   });
 
