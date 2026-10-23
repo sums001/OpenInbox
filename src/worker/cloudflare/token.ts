@@ -76,6 +76,8 @@ export async function checkPermissions(cf: Cloudflare, accountId: string, zoneId
   const probes: Record<string, () => Promise<ProbeResult>> = {
     zone: () => probe(() => cf.get('/zones?per_page=5')),
     dns: () => (zoneId ? probe(() => cf.get(`/zones/${zoneId}/dns_records?per_page=5`)) : Promise.resolve(noZone)),
+    // Email Routing's settings (status, enable, its DNS) sit under Zone Settings, not Email Routing Rules.
+    zone_settings: () => (zoneId ? probe(() => cf.get(`/zones/${zoneId}/email/routing`)) : Promise.resolve(noZone)),
     email_routing_rules: () =>
       zoneId ? probe(() => cf.get(`/zones/${zoneId}/email/routing/rules?per_page=5`)) : Promise.resolve(noZone),
     workers_routes: () =>

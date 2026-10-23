@@ -22,6 +22,8 @@ export interface FakeRule {
 
 export interface FakeState {
   tokens: string[];
+  // Paths the token lacks the permission for: Cloudflare answers 403, code 10000.
+  denied: RegExp[];
   accounts: { id: string; name: string }[];
   subdomain: string;
   scripts: Record<string, { d1: string; secrets?: Record<string, string> }>;
@@ -45,6 +47,7 @@ export interface FakeState {
 export function createFakeState(): FakeState {
   return {
     tokens: ['test-cf-token', 'dev-token', 'valid-token-0123456789abcdef'],
+    denied: [],
     accounts: [{ id: 'acc_test', name: 'Test Account' }],
     subdomain: 'tester',
     scripts: { openinbox: { d1: 'db_test' } },
@@ -130,6 +133,7 @@ export async function handleFake(state: FakeState, req: Request): Promise<Respon
 function cloudflare(state: FakeState, req: Request, url: URL, path: string, body: any): Response {
   const token = (req.headers.get('authorization') ?? '').replace(/^Bearer /, '');
   if (!state.tokens.includes(token)) return fail(401, 1000, 'Invalid API Token');
+  if (state.denied.some((d) => d.test(path))) return fail(403, 10000, 'Authentication error');
   const m = req.method;
   let r: RegExpExecArray | null;
 

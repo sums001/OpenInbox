@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router';
 import { ArrowLeft, Check, ChevronDown, CircleCheck, CircleDashed, CircleX, Cloud, Download, ExternalLink, KeyRound, LoaderCircle, Mail, RefreshCw, ShieldCheck, Sparkles, TriangleAlert } from 'lucide-react';
 import { ApiError, errorText, get, post } from '../../lib/api';
 import { cn, downloadBlob } from '../../lib/utils';
-import { tokenTemplateUrl, TOKEN_PERMISSIONS } from '../../../shared/constants';
+import { ACCOUNT_TOKENS_URL, tokenTemplateUrl, TOKEN_PERMISSIONS } from '../../../shared/constants';
 import type { DomainSetupStep, PermissionCheck, ZoneInspection } from '../../lib/types';
 import { LogoMark } from '../../components/Logo';
 import { Button } from '../../components/ui/button';
@@ -351,7 +351,7 @@ function TokenForm({ onSaved, onCancel, newKey = false, createsKey = false }: { 
         <a href={tokenTemplateUrl()} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-fg hover:bg-primary-hover">
           <Cloud className="h-4 w-4" /> Create token <ExternalLink className="h-3.5 w-3.5" />
         </a>
-        <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[13px] text-muted hover:text-fg">
+        <a href={ACCOUNT_TOKENS_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[13px] text-muted hover:text-fg">
           Open API tokens page <ExternalLink className="h-3.5 w-3.5" />
         </a>
       </div>

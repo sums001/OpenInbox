@@ -111,6 +111,23 @@ describe('first-run setup', () => {
     await other.post('/api/auth/recover', { email: 'admin@example.com', setupKey: second, newPassword: 'another long password' });
   });
 
+  it('names the permission a refused domain step needs', async () => {
+    // A token without Zone Settings: Email Routing's settings endpoints are refused, its rules are not.
+    fake.state.denied = [/\/email\/routing(\/dns|\/enable)?$/];
+    const c = new Client();
+    await c.init();
+    const status = await c.get('/api/setup/status');
+    const byKey = (k: string) => status.permissions.find((p: { key: string }) => p.key === k);
+    expect(byKey('zone_settings').ok).toBe(false);
+    expect(byKey('email_routing_rules').ok).toBe(true);
+
+    const r = await c.post('/api/setup/claim', { zoneId: 'zone_example', localPart: 'admin', displayName: 'Admin', password: 'correct horse battery', setupKey: ENCRYPTION_KEY });
+    const state = await c.post(`/api/admin/domains/${r.domainId}/setup`);
+    const routing = state.steps.find((s: { id: string }) => s.id === 'routing');
+    expect(routing.status).toBe('error');
+    expect(routing.message).toContain('Zone → Zone Settings → Edit');
+  });
+
   it('leaves zone permissions untested, not missing, when the account has no domains', async () => {
     fake.state.zones = [];
     const c = new Client();
@@ -119,6 +136,7 @@ describe('first-run setup', () => {
     expect(status.checks.zones).toMatchObject({ ok: false, count: 0 });
     const byKey = (k: string) => status.permissions.find((p: { key: string }) => p.key === k);
     expect(byKey('dns')).toMatchObject({ ok: false, untested: true });
+    expect(byKey('zone_settings')).toMatchObject({ ok: false, untested: true });
     expect(byKey('email_routing_rules')).toMatchObject({ ok: false, untested: true });
     expect(byKey('workers_scripts').ok).toBe(true);
     expect(byKey('workers_scripts').untested).toBeUndefined();

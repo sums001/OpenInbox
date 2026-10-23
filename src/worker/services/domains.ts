@@ -3,7 +3,7 @@
 import type { Env } from '../env';
 import type { AppSettings } from '../db/settings';
 import { all, first, run } from '../db/db';
-import { cfFromEnv, type Cloudflare } from '../cloudflare/client';
+import { CfError, cfFromEnv, type Cloudflare } from '../cloudflare/client';
 import {
   catchAllTargetsWorker,
   conflictingRules,
@@ -143,6 +143,14 @@ export function domainStatePayload(d: DomainRow) {
   };
 }
 
+// The token permission each step needs, named in the error when Cloudflare refuses it.
+const STEP_PERMISSION: Record<StepId, string> = {
+  routing: 'Zone → Zone Settings → Edit',
+  catchall: 'Zone → Email Routing Rules → Edit',
+  dmarc: 'Zone → DNS → Edit',
+  verify: 'Zone → Zone Settings and Zone → Email Routing Rules',
+};
+
 async function saveState(db: D1Database, d: DomainRow, state: SetupState, status?: DomainRow['status']): Promise<void> {
   await run(db, 'UPDATE domains SET setup_state = ?, status = COALESCE(?, status) WHERE id = ?', JSON.stringify(state), status ?? null, d.id);
 }
@@ -214,7 +222,13 @@ export async function runDomainStep(env: Env, settings: AppSettings, domainId: n
     const allDone = DOMAIN_STEPS.every((s) => state.steps[s.id]?.status === 'done' || state.steps[s.id]?.status === 'skipped');
     await saveState(env.DB, d, state, allDone ? 'active' : undefined);
   } catch (e) {
-    state.steps[step] = { status: 'error', message: e instanceof Error ? e.message : String(e), at: Date.now() };
+    const message =
+      e instanceof CfError && e.isAuth
+        ? `Cloudflare refused this: the token needs ${STEP_PERMISSION[step]}. Edit the token in Cloudflare, then retry.`
+        : e instanceof Error
+          ? e.message
+          : String(e);
+    state.steps[step] = { status: 'error', message, at: Date.now() };
     await saveState(env.DB, d, state, 'error');
     if (e instanceof HttpError && e.code === 'mx_conflict') throw e;
   }
