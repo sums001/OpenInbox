@@ -1,0 +1,43 @@
+# Keeps a copy created by the Deploy to Cloudflare button up to date with the original project.
+# Run it from the Actions tab (or let the weekly schedule run it). It copies the upstream files
+# into this repository, keeping your wrangler.jsonc names and database_id, and pushes a commit;
+# Cloudflare then redeploys and the deploy script applies any new database migrations.
+name: Sync upstream
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Upstream branch or tag to update to (default: latest release, else main)
+        required: false
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: write
+
+env:
+  # The original OpenInbox repository. Keep in sync with UPSTREAM_REPO in src/shared/constants.ts.
+  UPSTREAM: sums001/OpenInbox
+
+jobs:
+  sync:
+    if: github.repository != 'sums001/OpenInbox'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Copy upstream files
+        run: node scripts/sync-upstream.mjs "${{ inputs.ref }}"
+      - name: Commit and push
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then echo "Already up to date."; exit 0; fi
+          git config user.name "openinbox-sync[bot]"
+          git config user.email "openinbox-sync@users.noreply.github.com"
+          git add -A
+          git commit -m "Update OpenInbox to $(cat .upstream-version 2>/dev/null || echo latest)"
+          git push

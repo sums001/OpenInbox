@@ -1,0 +1,9 @@
+{
+  // Test-only config: the same Worker as ../wrangler.jsonc, without static assets (the SPA is not
+  // built during unit tests) and without cron triggers.
+  "name": "openinbox",
+  "main": "../src/worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [{ "binding": "DB", "database_name": "openinbox", "database_id": "local-test" }]
+}

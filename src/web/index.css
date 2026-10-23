@@ -1,0 +1,190 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Design tokens. Components use these through the Tailwind theme below, so light and dark
+   themes are just two sets of variables. */
+:root {
+  --bg: #f7f7f8;
+  --surface: #ffffff;
+  --surface-2: #f2f2f4;
+  --surface-3: #e9e9ec;
+  --border: #e3e3e8;
+  --border-strong: #d0d0d7;
+  --text: #17171c;
+  --text-muted: #5f5f6b;
+  --text-faint: #8d8d99;
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-soft: #eef0ff;
+  --primary-fg: #ffffff;
+  --danger: #dc2626;
+  --danger-soft: #fdecec;
+  --success: #15803d;
+  --success-soft: #e8f6ed;
+  --warning: #b45309;
+  --warning-soft: #fdf3e2;
+  --ring: rgb(79 70 229 / 0.35);
+  --shadow: 0 1px 2px rgb(16 16 24 / 0.06), 0 1px 3px rgb(16 16 24 / 0.08);
+  --shadow-lg: 0 12px 32px -8px rgb(16 16 24 / 0.22), 0 4px 10px -4px rgb(16 16 24 / 0.12);
+  color-scheme: light;
+}
+
+.dark {
+  --bg: #0e0e12;
+  --surface: #16161c;
+  --surface-2: #1d1d25;
+  --surface-3: #26262f;
+  --border: #2a2a34;
+  --border-strong: #3a3a46;
+  --text: #ececf1;
+  --text-muted: #a3a3b0;
+  --text-faint: #71717f;
+  --primary: #7c74ff;
+  --primary-hover: #918aff;
+  --primary-soft: #23214a;
+  --primary-fg: #ffffff;
+  --danger: #f87171;
+  --danger-soft: #3a1717;
+  --success: #4ade80;
+  --success-soft: #12301d;
+  --warning: #fbbf24;
+  --warning-soft: #352810;
+  --ring: rgb(124 116 255 / 0.45);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 16px 40px -8px rgb(0 0 0 / 0.6);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-fg: var(--text);
+  --color-muted: var(--text-muted);
+  --color-faint: var(--text-faint);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-fg: var(--primary-fg);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --shadow-card: var(--shadow);
+  --shadow-pop: var(--shadow-lg);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+*:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+::selection {
+  background: var(--primary-soft);
+}
+
+/* Thin scrollbars inside panes. */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* Rich text editor (TipTap/ProseMirror). */
+.editor .ProseMirror {
+  min-height: 180px;
+  outline: none;
+  padding: 12px 14px;
+}
+.editor .ProseMirror p {
+  margin: 0 0 0.6em;
+}
+.editor .ProseMirror ul {
+  list-style: disc;
+  padding-left: 1.4em;
+}
+.editor .ProseMirror ol {
+  list-style: decimal;
+  padding-left: 1.4em;
+}
+.editor .ProseMirror blockquote {
+  border-left: 3px solid var(--border-strong);
+  padding-left: 0.8em;
+  color: var(--text-muted);
+}
+.editor .ProseMirror a {
+  color: var(--primary);
+  text-decoration: underline;
+}
+.editor .ProseMirror code {
+  font-family: var(--font-mono);
+  background: var(--surface-2);
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+}
+.editor .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--text-faint);
+  pointer-events: none;
+  height: 0;
+}
+
+/* Plain-text mail bodies. */
+.mail-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 14px;
+}
+.mail-text a {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+.animate-slide-up {
+  animation: slide-up 0.18s ease-out;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-fade-in {
+  animation: fade-in 0.15s ease-out;
+}

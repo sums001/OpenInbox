@@ -1,0 +1,4 @@
+# Secrets. The "Deploy to Cloudflare" form asks for each one (descriptions live in package.json).
+# For local development, copy this file to .dev.vars and see "Development" in README.md.
+ENCRYPTION_KEY=
+CF_API_TOKEN=

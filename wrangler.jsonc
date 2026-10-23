@@ -1,0 +1,33 @@
+{
+  // OpenInbox: one Worker serves the API, the web app (static assets), inbound mail (email())
+  // and background jobs (scheduled()). The Deploy button reads this file and creates the D1
+  // database, then writes its database_id here in your copy of the repo.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "openinbox",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // Without this, a Worker on a new account gets no URL.
+  "workers_dev": true,
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "openinbox",
+      "migrations_dir": "src/worker/db/migrations"
+    }
+  ],
+  // There is deliberately no R2 binding: R2 on a new account needs a payment method, and an R2
+  // binding makes the Deploy button fail. Attachments are an opt-in that uses R2's S3 API.
+  "triggers": {
+    // Every minute: due tasks (scheduled sends, snoozes, retries). Daily: maintenance.
+    "crons": ["* * * * *", "17 3 * * *"]
+  },
+  "observability": {
+    "enabled": true
+  },
+  "upload_source_maps": true
+}
