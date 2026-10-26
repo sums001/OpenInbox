@@ -1,13 +1,17 @@
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { Inbox, Keyboard, LayoutDashboard, LogOut, Monitor, Moon, Settings, Sun, UserRound } from 'lucide-react';
+import { Command, Inbox, Keyboard, LayoutGrid, LogOut, Monitor, Moon, Settings, Sun, UserRound } from 'lucide-react';
 import { useSession } from '../../lib/session';
 import { post } from '../../lib/api';
 import { useTheme, type Theme } from '../../lib/theme';
 import { cn } from '../../lib/utils';
+import { CommandPalette, KeyCombo, SHORTCUTS } from '../../pages/mail/CommandPalette';
 import { LogoMark } from '../Logo';
-import { Menu, MenuItem, MenuLabel, MenuSeparator } from '../ui/overlay';
-import { Avatar } from '../ui/misc';
+import { Dialog, Menu, MenuItem, MenuLabel, MenuSeparator } from '../ui/overlay';
+import { Avatar, Kbd } from '../ui/misc';
+
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
 export function AppShell() {
   const { data: session } = useSession();
@@ -16,6 +20,25 @@ export function AppShell() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const isAdmin = user?.role === 'owner' || user?.role === 'admin';
+  const [palette, setPalette] = useState(false);
+  const [help, setHelp] = useState(false);
+
+  // Ctrl/⌘ K and the shortcuts help work on every page.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPalette((p) => !p);
+      }
+    };
+    const onHelp = () => setHelp(true);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('oi:shortcuts', onHelp);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('oi:shortcuts', onHelp);
+    };
+  }, []);
 
   const signOut = async () => {
     await post('/auth/logout');
@@ -28,10 +51,13 @@ export function AppShell() {
     <NavLink
       to={to}
       className={({ isActive }) =>
-        cn('flex items-center gap-2 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors', isActive ? 'bg-surface-2 text-fg' : 'text-muted hover:text-fg')
+        cn(
+          'flex h-7 items-center gap-[7px] rounded-[7px] px-2.5 text-[13px] font-medium transition-colors [&>svg]:h-[15px] [&>svg]:w-[15px]',
+          isActive ? 'bg-surface-2 text-fg [&>svg]:text-muted' : 'text-muted hover:text-fg',
+        )
       }
     >
-      <Icon className="h-4 w-4" />
+      <Icon />
       <span className="hidden sm:inline">{label}</span>
     </NavLink>
   );
@@ -44,26 +70,39 @@ export function AppShell() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-surface px-3 sm:px-4">
-        <NavLink to="/" className="flex items-center gap-2">
-          <LogoMark size={24} />
-          <span className="hidden text-[14px] font-semibold tracking-tight md:inline">{session?.instanceName ?? 'OpenInbox'}</span>
+      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-bg pr-3 pl-3.5 sm:gap-5">
+        <NavLink to="/" className="flex items-center gap-[9px] md:w-[230px]">
+          <LogoMark size={22} />
+          <span className="hidden truncate text-sm font-semibold tracking-[-0.01em] md:inline">{session?.instanceName ?? 'OpenInbox'}</span>
         </NavLink>
-        <nav className="ml-2 flex items-center gap-1">
+        <nav className="flex items-center gap-0.5">
           {nav('/mail', 'Mail', Inbox)}
-          {isAdmin && nav('/admin', 'Admin', LayoutDashboard)}
+          {isAdmin && nav('/admin', 'Admin', LayoutGrid)}
         </nav>
         <div className="flex-1" />
+        <button
+          type="button"
+          onClick={() => setPalette(true)}
+          className="hidden h-[30px] w-60 items-center gap-2 rounded-lg border border-border bg-surface pr-1.5 pl-2.5 text-[12.5px] text-faint transition-colors hover:border-border-strong hover:text-muted sm:flex"
+        >
+          <Command className="h-3.5 w-3.5" />
+          <span className="flex-1 text-left">Jump to…</span>
+          <Kbd>{isMac ? '⌘K' : 'Ctrl K'}</Kbd>
+        </button>
         <Menu
-          trigger={({ onClick }) => (
-            <button type="button" onClick={onClick} className="flex items-center gap-2 rounded-full p-0.5 hover:bg-surface-2" aria-label="Account menu">
-              <Avatar name={user?.name ?? ''} address={user?.email ?? ''} size={28} />
+          className="w-[264px]"
+          trigger={({ onClick, open }) => (
+            <button type="button" onClick={onClick} className={cn('rounded-full transition-shadow', open && 'ring-2 ring-[var(--ring)] ring-offset-2 ring-offset-bg')} aria-label="Account menu">
+              <Avatar name={user?.name ?? ''} address={user?.email ?? ''} size={30} />
             </button>
           )}
         >
-          <div className="px-2.5 py-2">
-            <div className="truncate text-[13px] font-medium">{user?.name}</div>
-            <div className="truncate text-xs text-muted">{user?.email}</div>
+          <div className="flex items-center gap-2.5 px-2 pt-2 pb-2.5">
+            <Avatar name={user?.name ?? ''} address={user?.email ?? ''} size={34} />
+            <div className="min-w-0 leading-snug">
+              <div className="truncate text-[13px] font-semibold">{user?.name}</div>
+              <div className="truncate text-xs text-muted">{user?.email}</div>
+            </div>
           </div>
           <MenuSeparator />
           <MenuItem icon={<UserRound />} onClick={() => navigate('/settings/account')}>
@@ -72,13 +111,13 @@ export function AppShell() {
           <MenuItem icon={<Settings />} onClick={() => navigate('/settings/mailboxes')}>
             Mail settings
           </MenuItem>
-          <MenuItem icon={<Keyboard />} onClick={() => window.dispatchEvent(new CustomEvent('oi:shortcuts'))} hint="?">
+          <MenuItem icon={<Keyboard />} onClick={() => setHelp(true)} hint={<Kbd>?</Kbd>}>
             Keyboard shortcuts
           </MenuItem>
           <MenuSeparator />
           <MenuLabel>Theme</MenuLabel>
           {themes.map(({ value, label, Icon }) => (
-            <MenuItem key={value} icon={<Icon />} onClick={() => setTheme(value)} hint={theme === value ? '✓' : undefined}>
+            <MenuItem key={value} icon={<Icon />} onClick={() => setTheme(value)} checked={theme === value}>
               {label}
             </MenuItem>
           ))}
@@ -86,12 +125,24 @@ export function AppShell() {
           <MenuItem icon={<LogOut />} onClick={signOut}>
             Sign out
           </MenuItem>
-          <div className="px-2.5 pt-1 pb-1.5 text-[11px] text-faint">OpenInbox {session?.version}</div>
+          <div className="px-2 pt-1.5 pb-1 text-[11px] text-faint">OpenInbox {session?.version}</div>
         </Menu>
       </header>
       <main className="min-h-0 flex-1">
         <Outlet />
       </main>
+
+      {palette && <CommandPalette onClose={() => setPalette(false)} />}
+      <Dialog open={help} onClose={() => setHelp(false)} title="Keyboard shortcuts" size="lg">
+        <div className="grid gap-x-9 sm:grid-cols-2">
+          {SHORTCUTS.map(([keys, label]) => (
+            <div key={label} className="flex min-h-[38px] items-center justify-between gap-3 border-b border-border py-1.5 text-[13px]">
+              <span className="text-muted">{label}</span>
+              <KeyCombo keys={keys} />
+            </div>
+          ))}
+        </div>
+      </Dialog>
     </div>
   );
 }

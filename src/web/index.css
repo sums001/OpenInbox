@@ -1,59 +1,89 @@
 @import 'tailwindcss';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
 
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* Design tokens. Components use these through the Tailwind theme below, so light and dark
    themes are just two sets of variables. */
 :root {
-  --bg: #f7f7f8;
+  --bg: #f6f6f8;
   --surface: #ffffff;
-  --surface-2: #f2f2f4;
-  --surface-3: #e9e9ec;
-  --border: #e3e3e8;
-  --border-strong: #d0d0d7;
-  --text: #17171c;
-  --text-muted: #5f5f6b;
-  --text-faint: #8d8d99;
+  --surface-2: #f1f1f4;
+  --surface-3: #e8e8ed;
+  --border: #e5e5ea;
+  --border-strong: #d2d2da;
+  --text: #16161d;
+  --text-muted: #5b5b68;
+  --text-faint: #8a8a97;
   --primary: #4f46e5;
   --primary-hover: #4338ca;
   --primary-soft: #eef0ff;
   --primary-fg: #ffffff;
-  --danger: #dc2626;
-  --danger-soft: #fdecec;
-  --success: #15803d;
-  --success-soft: #e8f6ed;
-  --warning: #b45309;
+  /* Primary as text on soft backgrounds (active nav, links). */
+  --primary-text: #4338ca;
+  --danger: #d92d20;
+  --danger-soft: #fdeceb;
+  --success: #137a3f;
+  --success-soft: #e6f5ec;
+  --warning: #b25a06;
   --warning-soft: #fdf3e2;
-  --ring: rgb(79 70 229 / 0.35);
-  --shadow: 0 1px 2px rgb(16 16 24 / 0.06), 0 1px 3px rgb(16 16 24 / 0.08);
-  --shadow-lg: 0 12px 32px -8px rgb(16 16 24 / 0.22), 0 4px 10px -4px rgb(16 16 24 / 0.12);
+  --ring: rgb(79 70 229 / 0.42);
+  --scrim: rgb(22 22 29 / 0.28);
+  /* Background behind mail bodies, which are written for white. */
+  --reading: #ffffff;
+  --shadow: 0 1px 2px rgb(16 16 24 / 0.05), 0 1px 3px rgb(16 16 24 / 0.06);
+  --shadow-lg: 0 16px 40px -12px rgb(16 16 24 / 0.22), 0 4px 12px -4px rgb(16 16 24 / 0.1), 0 0 0 1px rgb(16 16 24 / 0.04);
   color-scheme: light;
 }
 
 .dark {
-  --bg: #0e0e12;
-  --surface: #16161c;
-  --surface-2: #1d1d25;
-  --surface-3: #26262f;
-  --border: #2a2a34;
-  --border-strong: #3a3a46;
-  --text: #ececf1;
-  --text-muted: #a3a3b0;
-  --text-faint: #71717f;
+  --bg: #0d0d11;
+  --surface: #15151b;
+  --surface-2: #1c1c24;
+  --surface-3: #25252e;
+  --border: #25252e;
+  --border-strong: #363641;
+  --text: #ededf2;
+  --text-muted: #a1a1ae;
+  --text-faint: #6e6e7c;
   --primary: #7c74ff;
   --primary-hover: #918aff;
-  --primary-soft: #23214a;
+  --primary-soft: #221f47;
   --primary-fg: #ffffff;
+  --primary-text: #b3aeff;
   --danger: #f87171;
-  --danger-soft: #3a1717;
+  --danger-soft: #351719;
   --success: #4ade80;
-  --success-soft: #12301d;
+  --success-soft: #10301c;
   --warning: #fbbf24;
-  --warning-soft: #352810;
-  --ring: rgb(124 116 255 / 0.45);
+  --warning-soft: #32260e;
+  --ring: rgb(124 116 255 / 0.5);
+  --scrim: rgb(0 0 0 / 0.55);
+  --reading: #18181f;
   --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
-  --shadow-lg: 0 16px 40px -8px rgb(0 0 0 / 0.6);
+  --shadow-lg: 0 20px 48px -12px rgb(0 0 0 / 0.7), 0 0 0 1px rgb(255 255 255 / 0.06);
   color-scheme: dark;
+}
+
+/* Label colors: one value per color. Chip tint and text are mixed against the theme, so both
+   themes come from the same ten values. */
+:root {
+  --lab-slate: oklch(0.62 0.035 257);
+  --lab-red: oklch(0.62 0.19 25);
+  --lab-orange: oklch(0.68 0.17 50);
+  --lab-amber: oklch(0.76 0.15 78);
+  --lab-green: oklch(0.64 0.15 150);
+  --lab-teal: oklch(0.65 0.11 190);
+  --lab-blue: oklch(0.62 0.16 250);
+  --lab-indigo: oklch(0.58 0.19 275);
+  --lab-violet: oklch(0.6 0.19 300);
+  --lab-pink: oklch(0.64 0.19 355);
+}
+
+.label-chip {
+  background: color-mix(in oklch, var(--lab) 15%, var(--surface));
+  color: color-mix(in oklch, var(--lab) 70%, var(--text));
 }
 
 @theme inline {
@@ -70,6 +100,9 @@
   --color-primary-hover: var(--primary-hover);
   --color-primary-soft: var(--primary-soft);
   --color-primary-fg: var(--primary-fg);
+  --color-primary-text: var(--primary-text);
+  --color-scrim: var(--scrim);
+  --color-reading: var(--reading);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
   --color-success: var(--success);
@@ -78,8 +111,8 @@
   --color-warning-soft: var(--warning-soft);
   --shadow-card: var(--shadow);
   --shadow-pop: var(--shadow-lg);
-  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
 }
 
 html,
@@ -94,12 +127,23 @@ body {
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;
+  letter-spacing: -0.003em;
   -webkit-font-smoothing: antialiased;
 }
 
-*:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 1px;
+/* In the base layer so utilities like outline-none win. Text fields draw their own focus ring
+   (or their wrapper does), so they get no outline. */
+@layer base {
+  *:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 1px;
+  }
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  [contenteditable]:focus-visible {
+    outline: none;
+  }
 }
 
 ::selection {
@@ -116,7 +160,12 @@ body {
 .editor .ProseMirror {
   min-height: 180px;
   outline: none;
-  padding: 12px 14px;
+  padding: 14px 16px;
+  font-size: 14px;
+  line-height: 1.65;
+}
+.editor-compact .ProseMirror {
+  min-height: 96px;
 }
 .editor .ProseMirror p {
   margin: 0 0 0.6em;
@@ -157,6 +206,7 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 14px;
+  line-height: 1.65;
 }
 .mail-text a {
   color: var(--primary);
@@ -187,4 +237,36 @@ body {
 }
 .animate-fade-in {
   animation: fade-in 0.15s ease-out;
+}
+
+@keyframes pop-in {
+  from {
+    transform: scale(0.98);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.animate-pop-in {
+  animation: pop-in 0.15s ease-out;
+}
+
+@keyframes countdown {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0;
+  }
+}
+
+/* Native selects with the app's chevron. */
+.select-chevron {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%238a8a97' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 14px;
 }

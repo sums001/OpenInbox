@@ -87,12 +87,12 @@ test('setup, send, receive, reply, search and isolate members', async ({ page, b
 
   // 3. Add a member with their own inbox.
   await page.goto('/admin/users');
-  await page.getByRole('button', { name: 'Add user' }).click();
+  await page.getByRole('button', { name: 'Add a user' }).click();
   await page.locator('#name').fill('Bob Member');
   await page.locator('#local').fill('bob');
-  await page.getByRole('button', { name: 'Create user' }).click();
+  await page.getByRole('button', { name: 'Add user', exact: true }).click();
   await expect(page.getByText('Share these sign-in details')).toBeVisible();
-  const bobPassword = (await page.locator('.font-mono span').nth(1).textContent())!.trim();
+  const bobPassword = (await page.getByRole('dialog').locator('.font-mono').textContent())!.trim();
   await page.getByRole('button', { name: 'Done' }).click();
   await expect(page.getByText('bob@example.com').first()).toBeVisible();
 

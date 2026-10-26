@@ -1,9 +1,9 @@
 import { forwardRef, useId, useState, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
+import { Check, Eye, EyeOff, Minus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 const control =
-  'w-full rounded-lg border border-border bg-surface px-3 text-sm text-fg placeholder:text-faint transition-colors focus:border-primary focus:outline-none focus:ring-3 focus:ring-[var(--ring)] disabled:opacity-60';
+  'w-full rounded-lg border border-border bg-surface px-3 text-[13px] text-fg placeholder:text-faint transition-colors focus:border-primary focus:outline-none focus:ring-3 focus:ring-[var(--ring)] disabled:opacity-60 disabled:bg-surface-2';
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...rest }, ref) {
   return <input ref={ref} className={cn(control, 'h-9', className)} {...rest} />;
@@ -33,7 +33,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
 
 export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(function Select({ className, children, ...rest }, ref) {
   return (
-    <select ref={ref} className={cn(control, 'h-9 pr-8', className)} {...rest}>
+    <select ref={ref} className={cn(control, 'select-chevron h-9 pr-8', className)} {...rest}>
       {children}
     </select>
   );
@@ -57,13 +57,115 @@ export function Field({
   return (
     <div className={cn('space-y-1.5', className)}>
       {label && (
-        <label htmlFor={id} className="block text-[13px] font-medium text-fg">
+        <label htmlFor={id} className="block text-[12.5px] font-medium text-fg">
           {label}
         </label>
       )}
       {children}
-      {error ? <p className="text-xs text-danger">{error}</p> : hint ? <p className="text-xs text-muted">{hint}</p> : null}
+      {error ? <p className="text-xs text-danger">{error}</p> : hint ? <p className="text-xs text-muted text-pretty">{hint}</p> : null}
     </div>
+  );
+}
+
+// A local part with its domain picker attached: support @ acme.com.
+export function AddressInput({
+  id,
+  local,
+  onLocal,
+  domainId,
+  onDomain,
+  domains,
+  placeholder,
+  autoFocus,
+}: {
+  id?: string;
+  local: string;
+  onLocal: (v: string) => void;
+  domainId: number | undefined;
+  onDomain: (id: number) => void;
+  domains: { id: number; name: string }[];
+  placeholder?: string;
+  autoFocus?: boolean;
+}) {
+  return (
+    <div className="flex h-9 overflow-hidden rounded-lg border border-border bg-surface text-[13px] transition-colors focus-within:border-primary focus-within:ring-3 focus-within:ring-[var(--ring)]">
+      <input id={id} value={local} onChange={(e) => onLocal(e.target.value.trim())} placeholder={placeholder} autoFocus={autoFocus} className="min-w-0 flex-1 bg-transparent px-3 outline-none placeholder:text-faint" />
+      <select
+        value={domainId ?? ''}
+        onChange={(e) => onDomain(Number(e.target.value))}
+        aria-label="Domain"
+        className="select-chevron max-w-[55%] border-l border-border bg-surface-2 pr-8 pl-2.5 text-muted outline-none"
+      >
+        {domains.map((d) => (
+          <option key={d.id} value={d.id}>
+            @{d.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+// One of a few options, as selectable cards with a radio dot.
+export function ChoiceCards<T extends string>({ value, onChange, options }: { value: T; onChange: (v: T) => void; options: { value: T; label: ReactNode; hint?: ReactNode }[] }) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-2" role="radiogroup">
+      {options.map((o) => {
+        const on = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            onClick={() => onChange(o.value)}
+            className={cn('flex gap-2.5 rounded-[10px] border px-3.5 py-3 text-left transition-colors', on ? 'border-primary bg-primary-soft' : 'border-border hover:bg-surface-2')}
+          >
+            <span className={cn('mt-0.5 h-4 w-4 shrink-0 rounded-full', on ? 'border-[5px] border-primary' : 'border-[1.5px] border-border-strong')} />
+            <span className="min-w-0">
+              <span className="block text-[13px] font-medium">{o.label}</span>
+              {o.hint && <span className="block text-xs text-muted text-pretty">{o.hint}</span>}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Compact checkbox for lists and tables (selection, membership).
+export function Tick({
+  checked,
+  indeterminate,
+  onChange,
+  label,
+  className,
+}: {
+  checked: boolean;
+  indeterminate?: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+  className?: string;
+}) {
+  const on = checked || indeterminate;
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={indeterminate ? 'mixed' : checked}
+      aria-label={label}
+      onClick={(e) => {
+        e.stopPropagation();
+        onChange(!checked);
+      }}
+      className={cn(
+        'grid h-[15px] w-[15px] shrink-0 place-items-center rounded-[4px] border-[1.5px] text-primary-fg transition-colors',
+        on ? 'border-primary bg-primary' : 'border-border-strong bg-surface hover:border-faint',
+        className,
+      )}
+    >
+      {indeterminate ? <Minus className="h-[11px] w-[11px]" strokeWidth={3} /> : checked ? <Check className="h-[11px] w-[11px]" strokeWidth={3} /> : null}
+    </button>
   );
 }
 
@@ -108,13 +210,13 @@ export function Switch({ checked, onChange, label, disabled }: { checked: boolea
 
 export function SegmentedControl<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: ReactNode }[]; onChange: (v: T) => void }) {
   return (
-    <div className="inline-flex rounded-lg border border-border bg-surface-2 p-0.5">
+    <div className="inline-flex rounded-lg bg-surface-2 p-0.5">
       {options.map((o) => (
         <button
           key={o.value}
           type="button"
           onClick={() => onChange(o.value)}
-          className={cn('rounded-md px-3 py-1 text-[13px] font-medium transition-colors', value === o.value ? 'bg-surface text-fg shadow-card' : 'text-muted hover:text-fg')}
+          className={cn('flex-1 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors', value === o.value ? 'bg-surface text-fg shadow-card' : 'text-muted hover:text-fg')}
         >
           {o.label}
         </button>

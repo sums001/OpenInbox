@@ -11,7 +11,7 @@ import { Button } from '../../components/ui/button';
 import { Checkbox, Field, Input, Select, Switch, Textarea } from '../../components/ui/form';
 import { Alert, Card, CardHeader, EmptyState, PageHeader, PageSpinner } from '../../components/ui/misc';
 import { Dialog } from '../../components/ui/overlay';
-import { LABEL_CHIP, LABEL_DOT } from '../mail/labels';
+import { labelChip, labelDot } from '../mail/labels';
 
 interface BoxSettings {
   signature: string;
@@ -175,7 +175,7 @@ function Labels({ box }: { box: Mailbox }) {
         <div className="flex flex-wrap gap-2">
           {box.labels.length === 0 && <span className="text-[13px] text-muted">No labels yet.</span>}
           {box.labels.map((l) => (
-            <button key={l.id} type="button" onClick={() => setEditing(l)} className={cn('rounded-full px-2.5 py-1 text-xs font-medium', LABEL_CHIP[l.color] ?? LABEL_CHIP.slate)}>
+            <button key={l.id} type="button" onClick={() => setEditing(l)} className="label-chip rounded-md px-2.5 py-1 text-xs font-medium" style={labelChip(l.color)}>
               {l.name}
             </button>
           ))}
@@ -225,7 +225,7 @@ function ColorPicker({ value, onChange }: { value: string; onChange: (c: string)
   return (
     <div className="flex items-center gap-1">
       {LABEL_COLORS.map((c) => (
-        <button key={c} type="button" onClick={() => onChange(c)} aria-label={c} className={cn('h-6 w-6 rounded-full border-2', LABEL_DOT[c], value === c ? 'border-fg' : 'border-transparent')} />
+        <button key={c} type="button" onClick={() => onChange(c)} aria-label={c} className={cn('h-6 w-6 rounded-full ring-2 ring-offset-2 ring-offset-surface', value === c ? 'ring-fg' : 'ring-transparent')} style={labelDot(c)} />
       ))}
     </div>
   );

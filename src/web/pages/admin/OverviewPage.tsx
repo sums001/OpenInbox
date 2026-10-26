@@ -1,178 +1,226 @@
+import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import {
+  Activity,
+  ArrowRight,
   ArrowUpRight,
-  Check,
+  Circle,
   CircleCheck,
-  Cloud,
+  CircleX,
   Database,
+  FileText,
+  Gauge as GaugeIcon,
   Globe,
+  HardDrive,
   Inbox,
-  MailOpen,
+  Mail,
+  OctagonAlert,
+  PartyPopper,
+  Plug,
   RefreshCw,
   Rocket,
   Send,
-  ShieldAlert,
-  Sparkles,
   TriangleAlert,
+  UserPlus,
   UsersRound,
-  Zap,
+  X,
 } from 'lucide-react';
 import { get } from '../../lib/api';
-import { bytes, num, pct, timeAgo } from '../../lib/format';
+import { bytes, num, timeAgo } from '../../lib/format';
 import type { CloudflareUsage, Overview } from '../../lib/types';
 import { PROVIDER_INFO } from '../../../shared/constants';
 import { BarChart, Gauge, Sparkline } from '../../components/charts';
-import { Alert, Badge, Card, CardHeader, Meter, PageHeader, PageSpinner, Skeleton, StatusDot } from '../../components/ui/misc';
+import { Card, CardHeader, EmptyState, IconTile, Meter, PageHeader, PageSpinner, Skeleton, StatusDot } from '../../components/ui/misc';
 import { Button } from '../../components/ui/button';
 import { cn } from '../../lib/utils';
-import { actionLabel } from './ActivityPage';
+import { ActivityRow } from './ActivityPage';
+import { useOverview } from './data';
 
 export function OverviewPage() {
-  const [params] = useSearchParams();
-  const overview = useQuery({ queryKey: ['admin', 'overview'], queryFn: () => get<Overview>('/admin/overview'), refetchInterval: 60_000 });
+  const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const overview = useOverview(true);
   const usage = useQuery({ queryKey: ['admin', 'usage'], queryFn: () => get<CloudflareUsage>('/admin/usage'), staleTime: 5 * 60_000 });
   const o = overview.data;
   if (overview.isLoading) return <PageSpinner />;
-  if (!o) return <Alert tone="danger">Could not load the dashboard.</Alert>;
+  if (!o)
+    return (
+      <Card>
+        <EmptyState
+          icon={<CircleX />}
+          tone="danger"
+          title="Could not load the dashboard."
+          action={
+            <Button icon={<RefreshCw className="h-3.5 w-3.5" />} onClick={() => overview.refetch()}>
+              Try again
+            </Button>
+          }
+        >
+          The Worker answered with an error. Your mail is still being received.
+        </EmptyState>
+      </Card>
+    );
 
   const pending = o.checklist.filter((c) => !c.done && !c.optional);
   const series = o.stats.series;
-  const problems = o.problems.unparsed + o.problems.failed + o.problems.domainErrors + o.problems.providerErrors;
+  const p = o.problems;
+  const problems = p.unparsed + p.failed + p.domainErrors + p.providerErrors;
+  const last14 = series.slice(-14);
 
   return (
-    <div className="space-y-6">
-      <PageHeader title={o.instanceName} description="Everything about your mail server at a glance." actions={<Badge tone={o.storageMode === 'r2' ? 'primary' : 'neutral'}>{o.storageMode === 'r2' ? 'Attachments on (R2)' : 'Text-only mode'}</Badge>} />
+    <div className="flex flex-col gap-5">
+      <PageHeader
+        title="Overview"
+        description="Everything about your mail server at a glance."
+        actions={
+          <Button variant="primary" icon={<UserPlus className="h-[15px] w-[15px]" />} onClick={() => navigate('/admin/users?add=1')}>
+            Invite people
+          </Button>
+        }
+      />
 
       {params.get('welcome') && (
-        <div className="flex gap-4 rounded-xl border border-primary/20 bg-primary-soft p-5">
-          <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
-          <div>
-            <div className="font-semibold text-fg">Welcome aboard!</div>
-            <p className="mt-0.5 text-[13px] text-muted">Your domain receives mail now. Follow the checklist below to start sending, and invite your team when you're ready.</p>
+        <Card className="flex items-center gap-4 px-5 py-[18px]">
+          <IconTile tone="success" size={44}>
+            <PartyPopper />
+          </IconTile>
+          <div className="min-w-0 flex-1">
+            <div className="text-[15px] font-semibold">Welcome aboard!</div>
+            <p className="mt-0.5 text-[13px] text-muted text-pretty">Your domain receives mail now. Follow the checklist below to start sending, and invite your team when you're ready.</p>
           </div>
-        </div>
+          <button type="button" onClick={() => setParams({}, { replace: true })} className="grid h-7 w-7 place-items-center rounded-md text-faint hover:bg-surface-2 hover:text-fg" aria-label="Dismiss">
+            <X className="h-4 w-4" />
+          </button>
+        </Card>
       )}
 
       {o.update.available && (
-        <Alert
-          tone="primary"
-          title={`OpenInbox ${o.update.latest} is available`}
-          action={
-            o.update.url && (
-              <a href={o.update.url} target="_blank" rel="noreferrer" className="text-[13px] font-medium underline">
-                Release notes
-              </a>
-            )
-          }
-        >
-          You're on {o.update.current}. Run the "Sync upstream" GitHub Action in your repository to update; Cloudflare redeploys automatically.
-        </Alert>
+        <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-primary/20 bg-primary-soft py-2.5 pr-3 pl-3.5 text-[13px] text-primary-text">
+          <ArrowUpRight className="h-[15px] w-[15px] shrink-0" />
+          <span className="min-w-0 flex-1 text-pretty">
+            <b className="font-semibold">OpenInbox {o.update.latest} is available.</b> You're on {o.update.current}. Run the "Sync upstream" GitHub Action in your repository to update; Cloudflare redeploys automatically.
+          </span>
+          {o.update.url && (
+            <a href={o.update.url} target="_blank" rel="noreferrer" className="font-medium hover:underline">
+              Release notes
+            </a>
+          )}
+        </div>
       )}
 
       {pending.length > 0 && <Checklist items={o.checklist} />}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard icon={<Inbox />} label="Received today" value={o.stats.today.received} sub={`${num(o.stats.week.received)} this week`} spark={series.slice(-14).map((d) => d.received)} />
-        <StatCard icon={<Send />} label="Sent today" value={o.stats.today.sent} sub={`${num(o.stats.week.sent)} this week`} spark={series.slice(-14).map((d) => d.sent)} color="var(--success)" />
-        <StatCard icon={<MailOpen />} label="Unread" value={o.stats.unread} sub={`${num(o.stats.messages)} messages stored`} />
-        <StatCard
-          icon={<ShieldAlert />}
+      <div className="mt-1 flex flex-wrap items-baseline justify-between gap-2">
+        <span className="text-sm font-semibold">At a glance</span>
+        <span className="text-xs text-faint">Today since 00:00 UTC · updated {timeAgo(overview.dataUpdatedAt)}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Tile to="/admin/mailflow" icon={<Inbox />} label="Received today" value={o.stats.today.received} sub={`${num(o.stats.week.received)} this week`} spark={last14.map((d) => d.received)} color="var(--primary)" />
+        <Tile to="/admin/mailflow" icon={<Send />} label="Sent today" value={o.stats.today.sent} sub={`${num(o.stats.week.sent)} this week`} spark={last14.map((d) => d.sent)} color="var(--lab-teal)" />
+        <Tile
+          to="/admin/mailflow"
+          icon={<OctagonAlert />}
           label="Spam & rejected today"
           value={o.stats.today.spam + o.stats.today.rejected}
-          sub={`${num(o.stats.month.spam)} spam · ${num(o.stats.month.rejected)} rejected (30 days)`}
-          spark={series.slice(-14).map((d) => d.spam + d.rejected)}
-          color="var(--warning)"
+          sub={`${num(o.stats.today.spam)} spam · ${num(o.stats.today.rejected)} rejected`}
+          spark={last14.map((d) => d.spam + d.rejected)}
+          color="var(--lab-amber)"
+        />
+        <Tile icon={<Mail />} label="Unread" value={o.stats.unread} sub={`${num(o.stats.messages)} messages stored`} />
+        <Tile to="/admin/inboxes" icon={<Inbox />} label="Inboxes" value={o.counts.mailboxes} sub={o.counts.aliases ? `${num(o.counts.aliases)} aliases` : 'No aliases'} />
+        <Tile to="/admin/users" icon={<UsersRound />} label="Users" value={o.counts.users} sub={`${num(o.counts.providers)} sending ${o.counts.providers === 1 ? 'provider' : 'providers'}`} />
+        <Tile to="/admin/domains" icon={<Globe />} label="Domains" value={o.counts.domains} sub={p.domainErrors ? `${p.domainErrors} ${p.domainErrors === 1 ? 'needs' : 'need'} attention` : 'All healthy'} />
+        <Tile
+          to="/admin/mailflow"
+          icon={<TriangleAlert />}
+          label="Problems"
+          value={problems}
+          bad={problems > 0}
+          sub={
+            problems
+              ? [p.failed && `${p.failed} failed`, p.unparsed && `${p.unparsed} unreadable`, p.domainErrors && `${p.domainErrors} domain`, p.providerErrors && `${p.providerErrors} provider`].filter(Boolean).join(' · ')
+              : 'All good'
+          }
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader title="Mail traffic" description="Last 30 days" />
-          <div className="px-5 pt-6 pb-4">
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <Card>
+          <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
+            <div className="flex-1">
+              <div className="text-sm font-semibold">Mail traffic</div>
+              <div className="text-[12.5px] text-muted">Last 30 days</div>
+            </div>
+            <div className="flex gap-3.5 text-xs text-muted">
+              {(
+                [
+                  ['Received', 'var(--primary)'],
+                  ['Sent', 'var(--lab-teal)'],
+                  ['Spam', 'var(--lab-amber)'],
+                ] as const
+              ).map(([l, c]) => (
+                <span key={l} className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-[2px]" style={{ background: c }} />
+                  {l}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="px-5 pt-[18px] pb-4">
             <BarChart
               data={series.map((d) => ({ label: new Date(d.day).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), received: d.received, sent: d.sent, spam: d.spam }))}
               series={[
                 { key: 'received', label: 'Received', color: 'var(--primary)' },
-                { key: 'sent', label: 'Sent', color: 'var(--success)' },
-                { key: 'spam', label: 'Spam', color: 'var(--warning)' },
+                { key: 'sent', label: 'Sent', color: 'var(--lab-teal)' },
+                { key: 'spam', label: 'Spam', color: 'var(--lab-amber)' },
               ]}
             />
           </div>
         </Card>
-        <Card>
-          <CardHeader title="At a glance" />
-          <div className="divide-y divide-border">
-            <GlanceRow icon={<UsersRound />} label="Users" value={o.counts.users} to="/admin/users" />
-            <GlanceRow icon={<Inbox />} label="Inboxes" value={o.counts.mailboxes} sub={o.counts.aliases ? `${o.counts.aliases} aliases` : undefined} to="/admin/inboxes" />
-            <GlanceRow icon={<Globe />} label="Domains" value={o.counts.domains} to="/admin/domains" />
-            <GlanceRow icon={<Zap />} label="Sending providers" value={o.counts.providers} to="/admin/integrations" />
-            <GlanceRow
-              icon={problems ? <TriangleAlert className="text-warning" /> : <CircleCheck className="text-success" />}
-              label="Problems"
-              value={problems}
-              sub={problems ? [o.problems.failed && `${o.problems.failed} failed sends`, o.problems.unparsed && `${o.problems.unparsed} unreadable`, o.problems.domainErrors && `${o.problems.domainErrors} domain issues`].filter(Boolean).join(' · ') : 'All good'}
-              to="/admin/mailflow"
-            />
-          </div>
-        </Card>
+        <Capacity overview={o} usage={usage.data} />
       </div>
 
-      <LimitsSection overview={o} usage={usage.data} loading={usage.isLoading} refresh={() => usage.refetch()} refreshing={usage.isFetching} />
-
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <Limits overview={o} usage={usage.data} loading={usage.isLoading} refresh={() => usage.refetch()} refreshing={usage.isFetching} />
         <Card>
-          <CardHeader title="Domains" action={<Link to="/admin/domains" className="text-[13px] text-primary hover:underline">Manage</Link>} />
+          <CardHeader
+            icon={<Globe />}
+            title="Domains"
+            action={
+              <Link to="/admin/domains" className="text-[12.5px] font-medium text-primary-text hover:underline">
+                Manage
+              </Link>
+            }
+          />
           {o.domains.length === 0 ? (
-            <div className="px-5 py-6 text-sm text-muted">No domains yet.</div>
+            <div className="px-5 py-6 text-[13px] text-muted">No domains yet.</div>
           ) : (
-            <div className="divide-y divide-border">
-              {o.domains.map((d) => (
-                <div key={d.id} className="flex items-center gap-3 px-5 py-3">
-                  <StatusDot tone={d.status === 'active' ? 'success' : d.status === 'error' ? 'danger' : 'warning'} />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{d.name}</div>
-                    <div className="text-xs text-muted">
-                      {d.status === 'active' ? 'Receiving' : d.status === 'error' ? 'Needs attention' : 'Setup pending'} · {d.sendingVerified ? 'sending verified' : 'sending not set up'}
-                      {d.catchAll ? ' · catch-all on' : ''}
-                    </div>
-                  </div>
-                  <div className="flex gap-1">
-                    {d.health.map((h) => (
-                      <span key={h.key} title={h.key} className={cn('h-2 w-2 rounded-full', h.status === 'ok' ? 'bg-success' : h.status === 'warn' ? 'bg-warning' : 'bg-danger')} />
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
+            o.domains.map((d) => (
+              <div key={d.id} className="flex items-center gap-2.5 border-b border-border px-5 py-3 text-[13px] last:border-b-0">
+                <StatusDot tone={d.status === 'active' ? (d.sendingVerified ? 'success' : 'warning') : d.status === 'error' ? 'danger' : 'warning'} />
+                <span className="min-w-0 flex-1 truncate font-medium">{d.name}</span>
+                <span className="text-right text-[12.5px] text-muted">
+                  {d.status === 'active' ? (d.sendingVerified ? 'Receiving and sending' : 'Receiving only') : d.status === 'error' ? 'Needs attention' : "Setup isn't finished"}
+                </span>
+              </div>
+            ))
           )}
         </Card>
-        <Card>
-          <CardHeader title="Recent activity" action={<Link to="/admin/activity" className="text-[13px] text-primary hover:underline">View all</Link>} />
-          <div className="divide-y divide-border">
-            {o.recentInbound.slice(0, 3).map((r) => (
-              <div key={`in-${r.id}`} className="flex items-center gap-3 px-5 py-2.5">
-                <Inbox className="h-4 w-4 shrink-0 text-muted" />
-                <div className="min-w-0 flex-1 truncate text-[13px]">
-                  <span className="text-muted">{r.status === 'rejected' ? 'Rejected' : r.status === 'spam' ? 'Spam' : 'Mail'} from </span>
-                  {r.from || 'unknown'} <span className="text-muted">to</span> {r.to}
-                </div>
-                <span className="shrink-0 text-xs text-faint">{timeAgo(r.at)}</span>
-              </div>
-            ))}
-            {o.activity.map((a) => (
-              <div key={a.id} className="flex items-center gap-3 px-5 py-2.5">
-                <Check className="h-4 w-4 shrink-0 text-muted" />
-                <div className="min-w-0 flex-1 truncate text-[13px]">
-                  {actionLabel(a.action)} {a.target && <span className="text-muted">· {a.target}</span>}
-                </div>
-                <span className="shrink-0 text-xs text-faint">{timeAgo(a.at)}</span>
-              </div>
-            ))}
-            {!o.activity.length && !o.recentInbound.length && <div className="px-5 py-6 text-sm text-muted">Nothing yet.</div>}
-          </div>
-        </Card>
       </div>
+
+      <Card>
+        <CardHeader
+          icon={<Activity />}
+          title="Recent activity"
+          action={
+            <Link to="/admin/activity" className="text-[12.5px] font-medium text-primary-text hover:underline">
+              View all
+            </Link>
+          }
+        />
+        {o.activity.length ? o.activity.map((a) => <ActivityRow key={a.id} entry={a} ip={false} relative />) : <div className="px-5 py-6 text-[13px] text-muted">Nothing yet.</div>}
+      </Card>
     </div>
   );
 }
@@ -180,15 +228,28 @@ export function OverviewPage() {
 function Checklist({ items }: { items: Overview['checklist'] }) {
   const done = items.filter((i) => i.done).length;
   return (
-    <Card>
-      <CardHeader icon={<Rocket className="h-5 w-5 text-primary" />} title="Finish setting up" description={`${done} of ${items.length} done`} />
-      <div className="grid gap-px bg-border sm:grid-cols-2 lg:grid-cols-3">
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-center gap-3.5 px-5 py-4">
+        <IconTile tone="primary" size={34}>
+          <Rocket />
+        </IconTile>
+        <div className="flex-1">
+          <div className="text-sm font-semibold">Finish setting up</div>
+          <div className="text-[12.5px] text-muted">
+            {done} of {items.length} done
+          </div>
+        </div>
+        <Meter value={done} max={items.length} tone="primary" className="w-[180px] max-sm:hidden" />
+      </div>
+      <div className="grid border-t border-border sm:grid-cols-2 lg:grid-cols-4">
         {items.map((i) => (
-          <Link key={i.id} to={i.href} className="flex items-center gap-3 bg-surface px-5 py-3.5 transition-colors hover:bg-surface-2">
-            <span className={cn('flex h-5 w-5 shrink-0 items-center justify-center rounded-full border', i.done ? 'border-success bg-success text-white' : 'border-border-strong')}>{i.done && <Check className="h-3 w-3" />}</span>
-            <span className={cn('flex-1 text-[13px]', i.done ? 'text-muted line-through' : 'font-medium')}>{i.label}</span>
-            {i.optional && !i.done && <span className="text-[11px] text-faint">optional</span>}
-            {!i.done && <ArrowUpRight className="h-3.5 w-3.5 text-faint" />}
+          <Link key={i.id} to={i.href} className="group flex items-start gap-2.5 border-border px-[18px] py-3.5 transition-colors not-last:border-b hover:bg-surface-2 sm:border-r sm:not-last:border-b-0">
+            {i.done ? <CircleCheck className="mt-px h-[17px] w-[17px] shrink-0 text-success" /> : <Circle className="mt-px h-[17px] w-[17px] shrink-0 text-border-strong" />}
+            <div className="min-w-0 flex-1">
+              <div className={cn('text-[13px] font-medium', i.done ? 'text-muted' : 'text-fg')}>{i.label}</div>
+              <div className="text-xs text-faint">{i.done ? 'Done' : i.optional ? 'Optional' : 'To do'}</div>
+            </div>
+            {!i.done && <ArrowRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-faint transition-transform group-hover:translate-x-0.5" />}
           </Link>
         ))}
       </div>
@@ -196,133 +257,129 @@ function Checklist({ items }: { items: Overview['checklist'] }) {
   );
 }
 
-function StatCard({ icon, label, value, sub, spark, color }: { icon: React.ReactNode; label: string; value: number; sub?: string; spark?: number[]; color?: string }) {
-  return (
-    <Card className="p-5">
-      <div className="flex items-center gap-2 text-[13px] text-muted [&>svg]:h-4 [&>svg]:w-4">
+function Tile({ icon, label, value, sub, spark, color, bad, to }: { icon: ReactNode; label: string; value: number; sub?: string; spark?: number[]; color?: string; bad?: boolean; to?: string }) {
+  const body = (
+    <>
+      <div className="flex items-center gap-[7px] text-[12.5px] text-muted [&>svg]:h-3.5 [&>svg]:w-3.5 [&>svg]:text-faint">
         {icon}
         {label}
       </div>
-      <div className="mt-2 text-2xl font-semibold tracking-tight">{num(value)}</div>
-      {sub && <div className="mt-0.5 text-xs text-muted">{sub}</div>}
-      {spark && <Sparkline values={spark} className="mt-3" color={color} />}
+      <div className="mt-1 flex items-end gap-2.5">
+        <div className="min-w-0 flex-1">
+          <div className={cn('text-2xl leading-tight font-semibold tracking-[-0.02em] tabular-nums', bad && 'text-danger')}>{num(value)}</div>
+          {sub && <div className="truncate text-xs text-faint">{sub}</div>}
+        </div>
+        {spark && spark.length > 1 && <Sparkline values={spark} color={color} className="max-sm:hidden" />}
+      </div>
+    </>
+  );
+  const cls = cn('flex flex-col gap-0.5 rounded-xl border bg-surface px-4 pt-3.5 pb-3 shadow-card', bad ? 'border-[color-mix(in_oklch,var(--danger)_35%,var(--border))]' : 'border-border');
+  return to ? (
+    <Link to={to} className={cn(cls, 'transition-colors hover:border-border-strong')}>
+      {body}
+    </Link>
+  ) : (
+    <div className={cls}>{body}</div>
+  );
+}
+
+function Capacity({ overview: o, usage }: { overview: Overview; usage?: CloudflareUsage }) {
+  const navigate = useNavigate();
+  const s = o.storage;
+  return (
+    <Card className="flex flex-col">
+      <CardHeader icon={<Database />} title="Database capacity" description="D1 free plan: 500 MB per database" />
+      <div className="flex flex-col items-center px-5 pt-5 pb-3">
+        <Gauge value={s.d1Bytes ?? 0} max={s.d1Limit} label={`${bytes(s.d1Bytes)} of ${bytes(s.d1Limit)}`} />
+        {s.daysUntilFull !== null && <div className="mt-2 text-center text-xs text-faint">About {num(s.daysUntilFull)} days until full at the current rate</div>}
+      </div>
+      <div className="mt-auto border-t border-border text-[13px]">
+        <div className="flex items-center gap-2.5 border-b border-border px-5 py-[11px]">
+          <FileText className="h-[15px] w-[15px] text-faint" />
+          <span className="flex-1">Raw .eml kept in D1</span>
+          <span className="text-muted tabular-nums">{bytes(s.rawBytesInD1)}</span>
+        </div>
+        <div className="flex items-center gap-2.5 py-[9px] pr-3 pl-5">
+          <HardDrive className="h-[15px] w-[15px] text-faint" />
+          <span className="min-w-0 flex-1">
+            R2 storage (attachments)
+            {o.storageMode !== 'r2' && <span className="text-faint"> · Off</span>}
+          </span>
+          {o.storageMode === 'r2' ? (
+            <span className="text-muted tabular-nums">{usage?.r2 ? bytes(usage.r2.storageBytes) : 'On'}</span>
+          ) : (
+            <Button size="xs" onClick={() => navigate('/admin/integrations#storage')}>
+              Enable R2
+            </Button>
+          )}
+        </div>
+      </div>
     </Card>
   );
 }
 
-function GlanceRow({ icon, label, value, sub, to }: { icon: React.ReactNode; label: string; value: number; sub?: string; to: string }) {
+function LimitRow({ label, used, limit, sub }: { label: string; used: number; limit: number | null; sub?: string }) {
   return (
-    <Link to={to} className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-surface-2">
-      <span className="text-muted [&>svg]:h-4 [&>svg]:w-4">{icon}</span>
-      <div className="min-w-0 flex-1">
-        <div className="text-[13px] font-medium">{label}</div>
-        {sub && <div className="truncate text-xs text-muted">{sub}</div>}
-      </div>
-      <span className="text-sm font-semibold">{num(value)}</span>
-    </Link>
-  );
-}
-
-function LimitRow({ label, used, limit, detail }: { label: string; used: number; limit: number | null; detail?: string }) {
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-baseline justify-between gap-2 text-[13px]">
-        <span className="font-medium">{label}</span>
-        <span className="text-muted">
-          {limit !== null ? (
-            <>
-              <span className="font-medium text-fg">{num(Math.max(0, limit - used))}</span> left of {num(limit)}
-            </>
-          ) : (
-            `${num(used)} used · no cap`
-          )}
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-baseline gap-2 text-[13px]">
+        <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
+        <span className="text-[12.5px] text-muted tabular-nums">
+          <b className="font-semibold text-fg">{num(used)}</b> / {limit !== null ? num(limit) : 'no cap'}
         </span>
       </div>
-      {limit !== null && <Meter value={used} max={limit} />}
-      {detail && <div className="text-xs text-faint">{detail}</div>}
+      <Meter value={used} max={limit ?? 0} />
+      {sub && <div className="truncate text-xs text-faint">{sub}</div>}
     </div>
   );
 }
 
-function LimitsSection({ overview: o, usage, loading, refresh, refreshing }: { overview: Overview; usage?: CloudflareUsage; loading: boolean; refresh: () => void; refreshing: boolean }) {
-  const s = o.storage;
+function Limits({ overview: o, usage, loading, refresh, refreshing }: { overview: Overview; usage?: CloudflareUsage; loading: boolean; refresh: () => void; refreshing: boolean }) {
   return (
-    <div className="grid gap-4 lg:grid-cols-3">
-      <Card className="lg:col-span-2">
-        <CardHeader
-          title="Limits left today"
-          description="Free-tier quotas reset at 00:00 UTC. Sending caps are your providers' free plans unless you changed them."
-          action={
-            <Button size="xs" variant="ghost" icon={<RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />} onClick={refresh}>
-              Refresh
-            </Button>
-          }
-        />
-        <div className="grid gap-6 p-5 md:grid-cols-2">
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-faint">
-              <Send className="h-3.5 w-3.5" /> Sending
-            </div>
-            {o.providers.length === 0 && (
-              <div className="text-[13px] text-muted">
-                No sending provider yet. <Link to="/admin/integrations" className="text-primary hover:underline">Connect one</Link>.
-              </div>
-            )}
-            {o.providers.map((p) => (
-              <div key={p.id} className="space-y-3">
-                <LimitRow label={`${p.name}${p.isDefault ? ' (default)' : ''}`} used={p.usedToday} limit={p.dailyLimit} detail={PROVIDER_INFO[p.type]?.freeTier} />
-                {p.monthlyLimit !== null && <LimitRow label="This month" used={p.usedMonth} limit={p.monthlyLimit} />}
-              </div>
-            ))}
+    <Card>
+      <CardHeader
+        icon={<GaugeIcon />}
+        title="Limits left today"
+        description="Free-tier quotas reset at 00:00 UTC."
+        action={
+          <Button size="xs" variant="ghost" icon={<RefreshCw className={cn(refreshing && 'animate-spin')} />} onClick={refresh}>
+            Refresh
+          </Button>
+        }
+      />
+      <div className="grid gap-x-7 gap-y-4 px-5 pt-[18px] pb-5 md:grid-cols-2">
+        {o.providers.length === 0 && (
+          <div className="flex items-center gap-2 text-[13px] text-muted">
+            <Plug className="h-4 w-4 text-faint" />
+            No sending provider yet.
+            <Link to="/admin/integrations" className="font-medium text-primary-text hover:underline">
+              Connect one
+            </Link>
           </div>
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-faint">
-              <Cloud className="h-3.5 w-3.5" /> Cloudflare (whole account)
-            </div>
-            {loading ? (
-              <div className="space-y-3">
-                <Skeleton className="h-8" />
-                <Skeleton className="h-8" />
-                <Skeleton className="h-8" />
-              </div>
-            ) : usage?.available ? (
-              <>
-                {usage.workerRequests && <LimitRow label="Worker requests" used={usage.workerRequests.used} limit={usage.workerRequests.limit} detail={usage.workerRequests.thisApp != null ? `${num(usage.workerRequests.thisApp)} by OpenInbox` : undefined} />}
-                {usage.d1RowsRead && <LimitRow label="D1 rows read" used={usage.d1RowsRead.used} limit={usage.d1RowsRead.limit} />}
-                {usage.d1RowsWritten && <LimitRow label="D1 rows written" used={usage.d1RowsWritten.used} limit={usage.d1RowsWritten.limit} />}
-              </>
-            ) : (
-              <div className="text-[13px] text-muted">{usage?.reason ?? 'Usage unavailable.'}</div>
-            )}
-          </div>
-        </div>
-      </Card>
-      <Card>
-        <CardHeader title="Database capacity" description="D1 free plan: 500 MB per database" icon={<Database className="h-5 w-5" />} />
-        <div className="flex flex-col items-center gap-4 p-5">
-          <Gauge value={s.d1Bytes ?? 0} max={s.d1Limit} label={`${bytes(s.d1Bytes)} of ${bytes(s.d1Limit)}`} sub={s.daysUntilFull !== null ? `About ${num(s.daysUntilFull)} days until full at the current rate` : `${num(s.messages)} messages stored`} />
-          <div className="w-full space-y-2 text-[13px]">
-            <div className="flex justify-between">
-              <span className="text-muted">Raw .eml kept in D1</span>
-              <span>{bytes(s.rawBytesInD1)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted">Used</span>
-              <span>{pct(s.d1Bytes ?? 0, s.d1Limit)}%</span>
-            </div>
-            {usage?.r2 && (
-              <div className="space-y-1.5 border-t border-border pt-3">
-                <LimitRow label="R2 storage (attachments)" used={usage.r2.storageBytes} limit={usage.r2.limitBytes} detail={`${bytes(usage.r2.storageBytes)} · ${num(usage.r2.objects)} objects`} />
-              </div>
-            )}
-            {o.storageMode === 'text' && (
-              <div className="rounded-lg bg-surface-2 p-3 text-xs text-muted">
-                Attachments are listed but not stored in text-only mode. <Link to="/admin/integrations#storage" className="text-primary hover:underline">Enable R2</Link> to keep them.
-              </div>
-            )}
-          </div>
-        </div>
-      </Card>
-    </div>
+        )}
+        {o.providers.map((p) => (
+          <LimitRow
+            key={p.id}
+            label={`${p.name}${p.isDefault ? ' · default' : ''}`}
+            used={p.usedToday}
+            limit={p.dailyLimit}
+            sub={p.monthlyLimit !== null ? `${num(p.usedMonth)} / ${num(p.monthlyLimit)} this month` : (PROVIDER_INFO[p.type]?.freeTier ?? 'No monthly cap')}
+          />
+        ))}
+        {loading ? (
+          <>
+            <Skeleton className="h-10" />
+            <Skeleton className="h-10" />
+          </>
+        ) : usage?.available ? (
+          <>
+            {usage.workerRequests && <LimitRow label="Worker requests" used={usage.workerRequests.used} limit={usage.workerRequests.limit} sub={usage.workerRequests.thisApp != null ? `${num(usage.workerRequests.thisApp)} by OpenInbox · Cloudflare free plan` : 'Cloudflare free plan'} />}
+            {usage.d1RowsRead && <LimitRow label="D1 rows read" used={usage.d1RowsRead.used} limit={usage.d1RowsRead.limit} sub="Cloudflare free plan" />}
+            {usage.d1RowsWritten && <LimitRow label="D1 rows written" used={usage.d1RowsWritten.used} limit={usage.d1RowsWritten.limit} sub="Cloudflare free plan" />}
+          </>
+        ) : (
+          <div className="text-[13px] text-muted">{usage?.reason ?? 'Cloudflare usage is unavailable.'}</div>
+        )}
+      </div>
+    </Card>
   );
 }

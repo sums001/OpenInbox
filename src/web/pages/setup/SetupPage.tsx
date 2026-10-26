@@ -262,7 +262,23 @@ function ChecksStage({
   );
 }
 
-export function PermissionList({ permissions }: { permissions: PermissionCheck[] }) {
+export function PermissionList({ permissions, compact }: { permissions: PermissionCheck[]; compact?: boolean }) {
+  // Two columns of one-line rows; the reason each is needed shows on hover.
+  if (compact)
+    return (
+      <div className="grid gap-x-5 sm:grid-cols-2">
+        {permissions.map((p) => (
+          <div key={p.key} className="flex h-[30px] items-center gap-2 text-[12.5px]" title={p.why}>
+            {p.ok ? <CircleCheck className="h-3.5 w-3.5 shrink-0 text-success" /> : p.untested ? <CircleDashed className="h-3.5 w-3.5 shrink-0 text-faint" /> : p.optional ? <CircleX className="h-3.5 w-3.5 shrink-0 text-faint" /> : <CircleX className="h-3.5 w-3.5 shrink-0 text-danger" />}
+            <span className={cn('min-w-0 flex-1 truncate', p.ok ? 'text-fg' : 'text-muted')}>
+              {p.name}
+              {p.optional && ' (optional)'}
+            </span>
+            <span className="shrink-0 text-[11.5px] text-faint">{p.access}</span>
+          </div>
+        ))}
+      </div>
+    );
   return (
     <div className="mt-3 overflow-hidden rounded-lg border border-border">
       {permissions.map((p) => (

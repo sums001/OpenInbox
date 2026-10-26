@@ -9,10 +9,9 @@ import { withSignature, Composer, type ComposeState, type SendRequest } from './
 import { MailSidebar } from './MailSidebar';
 import { ThreadList } from './ThreadList';
 import { ThreadView } from './ThreadView';
-import { CommandPalette, SHORTCUTS } from './CommandPalette';
 import { useMailboxes, useMailSync, useThreadActions, useThreads } from './data';
-import { Dialog, useToast } from '../../components/ui/overlay';
-import { EmptyState, Kbd, PageSpinner } from '../../components/ui/misc';
+import { useToast } from '../../components/ui/overlay';
+import { Kbd, PageSpinner } from '../../components/ui/misc';
 import type { ThreadSummary } from '../../lib/types';
 
 export default function MailPage() {
@@ -51,8 +50,6 @@ function MailApp() {
   const [focusIndex, setFocusIndex] = useState(0);
   const [drawer, setDrawer] = useState(false);
   const [composers, setComposers] = useState<ComposeState[]>([]);
-  const [palette, setPalette] = useState(false);
-  const [help, setHelp] = useState(false);
   const [replyRequest, setReplyRequest] = useState<{ kind: 'reply' | 'replyAll' | 'forward'; nonce: number } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const pending = useRef(new Map<number, ReturnType<typeof setTimeout>>());
@@ -119,31 +116,60 @@ function MailApp() {
     [mailboxes, mailboxParam, toast],
   );
 
-  // mailto: style links, e.g. /mail/all/inbox?compose=ann@example.com
+  // mailto: style links, e.g. /mail/all/inbox?compose=ann@example.com (empty: a blank message).
   useEffect(() => {
-    const to = search.get('compose');
-    if (to && mailboxes) {
-      openCompose({ to: [{ name: '', address: to }] });
+    if (search.has('compose') && mailboxes) {
+      const to = search.get('compose');
+      openCompose(to ? { to: [{ name: '', address: to }] } : undefined);
       navigate(location.pathname, { replace: true });
     }
   }, [search, mailboxes, openCompose, navigate, location.pathname]);
 
+  // The command palette lives in the app shell and asks for these.
+  useEffect(() => {
+    const compose = () => openCompose();
+    const focusSearch = () => searchRef.current?.focus();
+    window.addEventListener('oi:compose', compose);
+    window.addEventListener('oi:search', focusSearch);
+    return () => {
+      window.removeEventListener('oi:compose', compose);
+      window.removeEventListener('oi:search', focusSearch);
+    };
+  }, [openCompose]);
+
+  const refresh = useCallback(() => {
+    qc.invalidateQueries({ queryKey: ['threads'] });
+    qc.invalidateQueries({ queryKey: ['thread'] });
+    qc.invalidateQueries({ queryKey: ['mailboxes'] });
+  }, [qc]);
+
   const doSend = useCallback(
     async (id: number, sendAt?: number | null) => {
+      // A failed send stays in the thread as a failed message; Retry sends it again.
+      const retry = {
+        label: 'Retry',
+        onClick: () =>
+          post<{ status: string; error?: string }>(`/messages/${id}/retry`)
+            .then((r) => (r.status === 'sent' ? toast.success('Message sent') : toast.error(r.error ? `Not sent: ${r.error}` : 'Still not sent.')))
+            .catch((e) => toast.error(errorText(e)))
+            .finally(refresh),
+      };
       try {
         const r = await post<{ status: string; error?: string }>(`/drafts/${id}/send`, { sendAt: sendAt ?? null });
         if (r.status === 'sent') toast.success('Message sent');
-        else if (r.status === 'scheduled') toast.success(`Scheduled for ${fullDate(sendAt!)}`);
-        else toast.error(r.error ? `Not sent: ${r.error}` : 'Not sent.');
+        else if (r.status === 'scheduled')
+          toast.success(`Scheduled for ${fullDate(sendAt!)}`, {
+            label: 'Undo',
+            onClick: () => post(`/messages/${id}/cancel-schedule`).then(() => toast.success('Moved back to drafts')).catch((e) => toast.error(errorText(e))).finally(refresh),
+          });
+        else toast.error(r.error ? `Not sent: ${r.error}` : 'Not sent.', retry);
       } catch (e) {
         toast.error(`Not sent: ${errorText(e)}`);
       } finally {
-        qc.invalidateQueries({ queryKey: ['threads'] });
-        qc.invalidateQueries({ queryKey: ['thread'] });
-        qc.invalidateQueries({ queryKey: ['mailboxes'] });
+        refresh();
       }
     },
-    [qc, toast],
+    [refresh, toast],
   );
 
   // Undo send: the message waits a few seconds in the browser before it goes out.
@@ -158,7 +184,7 @@ function MailApp() {
         doSend(r.draftId);
       }, UNDO_MS);
       pending.current.set(r.draftId, timer);
-      toast.info(
+      toast.pending(
         'Sending…',
         {
           label: 'Undo',
@@ -196,16 +222,9 @@ function MailApp() {
     [mailboxParam, navigate],
   );
 
-  // Keyboard shortcuts.
+  // Keyboard shortcuts (Ctrl/⌘ K is in the app shell).
   useEffect(() => {
-    const onHelp = () => setHelp(true);
-    window.addEventListener('oi:shortcuts', onHelp);
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        setPalette(true);
-        return;
-      }
       if (isTyping(e) || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('[role="dialog"]')) return;
       const focused = list[focusIndex];
       const target = threadId ? [threadId] : selected.size ? [...selected] : focused ? [focused.id] : [];
@@ -226,7 +245,7 @@ function MailApp() {
           searchRef.current?.focus();
           break;
         case '?':
-          setHelp(true);
+          window.dispatchEvent(new CustomEvent('oi:shortcuts'));
           break;
         case 'g':
           gPressed.current = true;
@@ -300,10 +319,7 @@ function MailApp() {
       }
     };
     window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('oi:shortcuts', onHelp);
-    };
+    return () => window.removeEventListener('keydown', onKey);
   }, [list, focusIndex, selected, threadId, view, base, suffix, mailboxParam, navigate, openCompose, openThread, act, toast]);
 
   // The browser tab shows the unread count.
@@ -317,14 +333,30 @@ function MailApp() {
 
   if (isLoading || !mailboxes) return <PageSpinner />;
 
+  const position = threadId ? list.findIndex((t) => t.id === threadId) : -1;
+  const nav =
+    position >= 0
+      ? {
+          index: position,
+          total: list.length,
+          prev: position > 0 ? () => openThread(list[position - 1]) : undefined,
+          next: list[position + 1] ? () => openThread(list[position + 1]) : undefined,
+        }
+      : undefined;
+
   return (
     <div className="flex h-full min-h-0">
       {/* Sidebar: drawer on mobile */}
-      <div className={cn('fixed inset-0 z-30 bg-black/40 md:hidden', drawer ? 'block' : 'hidden')} onClick={() => setDrawer(false)} />
-      <aside className={cn('fixed inset-y-0 left-0 z-40 w-64 border-r border-border bg-surface transition-transform md:static md:z-auto md:translate-x-0', drawer ? 'translate-x-0' : '-translate-x-full')}>
-        <MailSidebar mailboxes={mailboxes} current={mailboxParam} view={view} onCompose={() => { setDrawer(false); openCompose(); }} onNavigate={() => setDrawer(false)} />
+      <div className={cn('fixed inset-0 z-30 bg-scrim md:hidden', drawer ? 'block animate-fade-in' : 'hidden')} onClick={() => setDrawer(false)} />
+      <aside
+        className={cn(
+          'fixed inset-y-0 left-0 z-40 w-[304px] bg-bg shadow-pop transition-transform md:static md:z-auto md:w-64 md:translate-x-0 md:border-r md:border-border md:shadow-none',
+          drawer ? 'translate-x-0' : '-translate-x-full',
+        )}
+      >
+        <MailSidebar mailboxes={mailboxes} current={mailboxParam} view={view} onCompose={() => { setDrawer(false); openCompose(); }} onNavigate={() => setDrawer(false)} onClose={() => setDrawer(false)} />
       </aside>
-      <section className={cn('min-h-0 w-full flex-col border-r border-border bg-bg md:flex md:w-[380px] md:shrink-0 lg:w-[420px]', threadId ? 'hidden' : 'flex')}>
+      <section className={cn('relative min-h-0 w-full flex-col border-border md:flex md:w-[380px] md:shrink-0 md:border-r lg:w-[400px]', threadId ? 'hidden' : 'flex')}>
         <ThreadList
           mailbox={mailboxParam}
           view={view}
@@ -342,7 +374,7 @@ function MailApp() {
           searchRef={searchRef}
         />
       </section>
-      <section className={cn('min-h-0 min-w-0 flex-1 bg-bg', threadId ? 'block' : 'hidden md:block')}>
+      <section className={cn('min-h-0 min-w-0 flex-1', threadId ? 'block' : 'hidden md:block')}>
         {threadId ? (
           <ThreadView
             key={threadId}
@@ -352,35 +384,26 @@ function MailApp() {
             onSend={onSend}
             onOpenDraft={(s) => openCompose(s)}
             replyRequest={replyRequest}
+            nav={nav}
           />
         ) : (
-          <div className="flex h-full items-center justify-center">
-            <EmptyState icon={<Inbox className="h-5 w-5" />} title="Select a conversation">
-              <span className="inline-flex flex-wrap items-center justify-center gap-1.5">
-                Press <Kbd>c</Kbd> to compose, <Kbd>/</Kbd> to search, <Kbd>?</Kbd> for shortcuts.
-              </span>
-            </EmptyState>
+          <div className="flex h-full flex-col items-center justify-center pb-10 text-center">
+            <div className="mb-[18px] grid h-[52px] w-[52px] place-items-center rounded-[15px] border border-border bg-surface text-faint shadow-card">
+              <Inbox className="h-[22px] w-[22px]" />
+            </div>
+            <div className="text-[15px] font-semibold">Select a conversation</div>
+            <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5 text-[13px] text-muted">
+              Press <Kbd>c</Kbd> to compose, <Kbd>/</Kbd> to search, <Kbd>?</Kbd> for shortcuts
+            </div>
           </div>
         )}
       </section>
 
-      <div className="pointer-events-none fixed right-0 bottom-0 z-30 flex items-end gap-3 px-2 sm:right-4">
+      <div className="pointer-events-none fixed right-0 bottom-0 z-30 flex items-end gap-3 px-2 sm:right-6">
         {composers.map((c) => (
           <Composer key={c.key} initial={c} mailboxes={mailboxes} variant="floating" onClose={() => setComposers((cs) => cs.filter((x) => x.key !== c.key))} onSend={onSend} />
         ))}
       </div>
-
-      <CommandPalette open={palette} onClose={() => setPalette(false)} mailboxes={mailboxes} onCompose={() => openCompose()} onSearch={onSearch} />
-      <Dialog open={help} onClose={() => setHelp(false)} title="Keyboard shortcuts" size="md">
-        <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
-          {SHORTCUTS.map(([keys, label]) => (
-            <div key={keys} className="flex items-center justify-between gap-3 text-[13px]">
-              <span className="text-muted">{label}</span>
-              <Kbd>{keys}</Kbd>
-            </div>
-          ))}
-        </div>
-      </Dialog>
     </div>
   );
 }
