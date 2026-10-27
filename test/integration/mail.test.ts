@@ -235,6 +235,22 @@ describe('sending', () => {
     expect((await admin.get('/api/threads?mailbox=all&view=drafts')).threads.map((t: { subject: string }) => t.subject)).toContain('Later');
   });
 
+  it('keeps an upload attached when a queued save still lists it as an upload', async () => {
+    const boxes = await admin.get('/api/mailboxes');
+    const me = await admin.get('/api/auth/session');
+    await env.DB.prepare("INSERT INTO uploads (id, user_id, storage_key, filename, content_type, size, created_at) VALUES ('u1', ?, 'uploads/u1', 'a.pdf', 'application/pdf', 3, 0)")
+      .bind(me.user.id)
+      .run();
+    const input = { mailboxId: boxes[0].id, from: 'admin@example.com', to: [], subject: 'Files', html: '<p>Hi</p>', uploadIds: ['u1'] };
+    const first = await admin.post('/api/drafts', input);
+    expect(first.attachments).toMatchObject([{ filename: 'a.pdf', uploadId: 'u1' }]);
+    // The composer sent this before the first response told it the attachment id.
+    const second = await admin.put(`/api/drafts/${first.id}`, { ...input, html: '<p>Hi there</p>' });
+    expect(second.attachments).toMatchObject([{ id: first.attachments[0].id, filename: 'a.pdf' }]);
+    // Removing it in the composer drops it.
+    expect((await admin.put(`/api/drafts/${first.id}`, { ...input, uploadIds: [] })).attachments).toEqual([]);
+  });
+
   it('updates delivery status from signed Resend webhooks and suppresses bounces', async () => {
     await env.DB.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('app.url', 'https://openinbox.tester.workers.dev', 0)").run();
     const { id: providerId } = await connectResend(admin);

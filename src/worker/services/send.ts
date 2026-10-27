@@ -166,10 +166,17 @@ export async function saveDraft(env: Env, user: SessionUser, input: ComposeInput
     keep.length ? `SELECT id, message_id FROM attachments WHERE id IN (${placeholders(keep.length)})` : 'SELECT id, message_id FROM attachments WHERE 0',
     ...keep,
   );
+  // A save queued behind another one still lists an upload the earlier save already attached
+  // (the composer learns the attachment id from that save's response), so keep those too.
+  const uploadKeys = (input.uploadIds ?? []).map((u) => `uploads/${u}`);
   stmts.push(
-    keep.length
-      ? db.prepare(`DELETE FROM attachments WHERE message_id = ? AND id NOT IN (${placeholders(keep.length)})`).bind(id, ...keep)
-      : db.prepare('DELETE FROM attachments WHERE message_id = ?').bind(id),
+    db
+      .prepare(
+        `DELETE FROM attachments WHERE message_id = ?${keep.length ? ` AND id NOT IN (${placeholders(keep.length)})` : ''}${
+          uploadKeys.length ? ` AND (upload_key IS NULL OR upload_key NOT IN (${placeholders(uploadKeys.length)}))` : ''
+        }`,
+      )
+      .bind(id, ...keep, ...uploadKeys),
   );
   for (const a of current.filter((x) => x.message_id !== id)) {
     // An attachment of another message (forwarding): reference it, decoded at send time.
