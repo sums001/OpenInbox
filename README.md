@@ -155,6 +155,25 @@ Everything runs inside your own Cloudflare account. There is no OpenInbox server
 
 **4. Connect a sending provider** in **Admin → Integrations**.
 
+#### Walkthrough
+
+<sub>Each screenshot shows one step of a real deploy. Click one to open it full size.</sub>
+
+<table>
+  <tr>
+    <td width="25%" align="center"><a href="assets/deployment/deploy-1-button.png"><img src="assets/deployment/deploy-1-button.png" alt="Click Deploy to Cloudflare"></a><br><sub><b>1.</b> Click Deploy to Cloudflare</sub></td>
+    <td width="25%" align="center"><a href="assets/deployment/deploy-2-form.png"><img src="assets/deployment/deploy-2-form.png" alt="Deploy form"></a><br><sub><b>2.</b> Keep the defaults, click Deploy</sub></td>
+    <td width="25%" align="center"><a href="assets/deployment/deploy-3-token-permissions.png"><img src="assets/deployment/deploy-3-token-permissions.png" alt="Token permissions, pre-filled"></a><br><sub><b>3.</b> Create token: Review token</sub></td>
+    <td width="25%" align="center"><a href="assets/deployment/deploy-4-token-review.png"><img src="assets/deployment/deploy-4-token-review.png" alt="Review and create the token"></a><br><sub><b>4.</b> Create token</sub></td>
+  </tr>
+  <tr>
+    <td width="25%" align="center"><a href="assets/deployment/deploy-5-token-created.png"><img src="assets/deployment/deploy-5-token-created.png" alt="Copy the API token"></a><br><sub><b>5.</b> Copy the API token</sub></td>
+    <td width="25%" align="center"><a href="assets/deployment/setup-1-connect.png"><img src="assets/deployment/setup-1-connect.png" alt="Setup checks pass"></a><br><sub><b>6.</b> Paste it; checks pass</sub></td>
+    <td width="25%" align="center"><a href="assets/deployment/setup-2-account.png"><img src="assets/deployment/setup-2-account.png" alt="Create the admin account"></a><br><sub><b>7.</b> Create your admin email</sub></td>
+    <td width="25%" align="center"><a href="assets/deployment/setup-3-done.png"><img src="assets/deployment/setup-3-done.png" alt="Setup complete"></a><br><sub><b>8.</b> Done: mail arrives</sub></td>
+  </tr>
+</table>
+
 <details>
 <summary>The token's permissions (filled in for you by <a href="https://dash.cloudflare.com/?to=/:account/api-tokens&amp;permissionGroupKeys=%5B%7B%22key%22%3A%22c8fed203ed3043cba015a93ad1616f1f%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%224755a26eedb94da69e1066d98aa820be%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%223030687196b94b638145a3953da2b699%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%2279b3ec0d10ce4148a8f8bdc0cc5f97f2%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%2228f4b596e7d643029c524985477ae49a%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%229c88f9c5bce24ce7af9a958ba9c504db%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22e086da7e2179491d91ee5f35b3ca210a%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22e4589eb09e63436686cd64252a3aebeb%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22b89a480218d04ceb98b4fe57ca29dc1f%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22c1fde68c7bcc44588cbb6ddbc16d6480%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22bf7481a1826f439697cb59a20b22293e%22%2C%22type%22%3A%22edit%22%7D%5D&amp;name=OpenInbox">this link</a>)</summary>
 
