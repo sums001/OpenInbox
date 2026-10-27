@@ -80,7 +80,7 @@ export const PROVIDER_INFO: Record<ProviderType, {
   },
 };
 
-export const FOLDERS = ['inbox', 'sent', 'drafts', 'starred', 'snoozed', 'archive', 'spam', 'trash'] as const;
+export const FOLDERS = ['inbox', 'sent', 'drafts', 'starred', 'snoozed', 'archive', 'allmail', 'spam', 'trash'] as const;
 export type Folder = (typeof FOLDERS)[number];
 // Folders a thread can physically be in. The others are views.
 export const THREAD_FOLDERS = ['inbox', 'archive', 'spam', 'trash'] as const;

@@ -208,19 +208,28 @@ export function Switch({ checked, onChange, label, disabled }: { checked: boolea
   );
 }
 
-export function SegmentedControl<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: ReactNode }[]; onChange: (v: T) => void }) {
+// `count` shows as a small number after the label, as in filter tabs.
+export function SegmentedControl<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: ReactNode; count?: number }[]; onChange: (v: T) => void }) {
   return (
-    <div className="inline-flex rounded-lg bg-surface-2 p-0.5">
-      {options.map((o) => (
-        <button
-          key={o.value}
-          type="button"
-          onClick={() => onChange(o.value)}
-          className={cn('flex-1 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors', value === o.value ? 'bg-surface text-fg shadow-card' : 'text-muted hover:text-fg')}
-        >
-          {o.label}
-        </button>
-      ))}
+    <div className="inline-flex shrink-0 items-center rounded-lg bg-surface-2 p-0.5">
+      {options.map((o) => {
+        const on = value === o.value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            aria-pressed={on}
+            onClick={() => onChange(o.value)}
+            className={cn(
+              'inline-flex h-[30px] flex-1 items-center justify-center gap-1.5 rounded-md px-3 text-[13px] font-medium whitespace-nowrap transition-colors',
+              on ? 'bg-surface text-fg shadow-card' : 'text-muted hover:text-fg',
+            )}
+          >
+            {o.label}
+            {o.count !== undefined && <span className={cn('text-xs tabular-nums', on ? 'text-muted' : 'text-faint')}>{o.count}</span>}
+          </button>
+        );
+      })}
     </div>
   );
 }

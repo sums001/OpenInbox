@@ -25,6 +25,18 @@ export function useTheme(): [Theme, (t: Theme) => void] {
   return [theme, setTheme];
 }
 
+// Whether the dark theme is showing right now; follows theme changes and the system setting.
+export function useIsDark(): boolean {
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
+  useEffect(() => {
+    const el = document.documentElement;
+    const observer = new MutationObserver(() => setDark(el.classList.contains('dark')));
+    observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+  return dark;
+}
+
 // Applied before React renders, to avoid a flash of the wrong theme.
 export function initTheme(): void {
   applyTheme(storageGet<Theme>('oi.theme', 'system'));

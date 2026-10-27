@@ -110,6 +110,8 @@ function viewSql(view: ListParams['view']): { where: string; sort: string } {
       return { where: "starred = 1 AND folder != 'trash'", sort: 'last_message_at' };
     case 'snoozed':
       return { where: 'snoozed_until IS NOT NULL', sort: 'snoozed_until' };
+    case 'allmail':
+      return { where: "folder NOT IN ('spam', 'trash')", sort: 'last_message_at' };
     default:
       return { where: '1', sort: 'last_message_at' };
   }

@@ -14,6 +14,7 @@ import {
   Globe,
   Inbox,
   LayoutGrid,
+  Mails,
   OctagonAlert,
   Plug,
   Search,
@@ -49,6 +50,7 @@ const FOLDER_ITEMS: [string, string, ReactNode, string[]?][] = [
   ['drafts', 'Drafts', <FileText />, ['G', 'D']],
   ['scheduled', 'Scheduled', <CalendarClock />],
   ['archive', 'Archive', <Archive />, ['G', 'A']],
+  ['allmail', 'All mail', <Mails />],
   ['spam', 'Spam', <OctagonAlert />, ['G', 'P']],
   ['trash', 'Trash', <Trash2 />, ['G', 'T']],
 ];
@@ -89,8 +91,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
           run: go(`/mail/${multi ? m.id : 'all'}/label-${l.id}`),
         })),
       ),
-      { id: 'settings-mail', label: 'Mail settings', group: 'Settings', icon: <Settings />, run: go('/settings/mailboxes') },
-      { id: 'settings-account', label: 'Account', group: 'Settings', icon: <UserRound />, run: go('/settings/account') },
+      { id: 'settings-mail', label: 'Mail settings', group: 'Settings', icon: <Settings />, run: go('/settings/signature') },
+      { id: 'settings-account', label: 'Account', group: 'Settings', icon: <UserRound />, run: go('/settings/profile') },
     ];
     if (isAdmin) {
       const admin: [string, string, ReactNode][] = [

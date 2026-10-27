@@ -14,14 +14,39 @@ import { Alert, Badge, Card, CardHeader, CopyButton, PageHeader } from '../../co
 import { Dialog } from '../../components/ui/overlay';
 import { PasswordStrength } from '../../components/PasswordStrength';
 
-export function AccountSettings() {
+// Each section is its own page in the settings sidebar.
+export function ProfileSettings() {
   return (
     <div className="space-y-6">
-      <PageHeader title="Account" description="Your profile, password, two-factor authentication and devices." />
+      <PageHeader title="Profile" description="Your name and sign-in email." />
       <Profile />
+    </div>
+  );
+}
+
+export function AppearanceSettings() {
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Appearance" description="Theme and desktop notifications for this browser." />
       <Appearance />
+    </div>
+  );
+}
+
+export function SecuritySettings() {
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Security" description="Your password and two-factor authentication." />
       <Password />
       <TwoFactor />
+    </div>
+  );
+}
+
+export function DevicesSettings() {
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Devices" description="Browsers signed in to your account. Sign out any you don't recognize." />
       <Sessions />
     </div>
   );
@@ -65,7 +90,7 @@ function Appearance() {
   };
   return (
     <Card>
-      <CardHeader title="Appearance and notifications" />
+      <CardHeader title="Theme and notifications" />
       <div className="space-y-5 p-5">
         <Field label="Theme">
           <SegmentedControl

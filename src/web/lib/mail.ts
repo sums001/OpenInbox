@@ -13,6 +13,7 @@ export const VIEW_LABELS: Record<string, string> = {
   drafts: 'Drafts',
   scheduled: 'Scheduled',
   archive: 'Archive',
+  allmail: 'All mail',
   spam: 'Spam',
   trash: 'Trash',
   assigned: 'Assigned to me',

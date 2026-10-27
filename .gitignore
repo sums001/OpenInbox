@@ -5,6 +5,7 @@ coverage/
 test-results/
 playwright-report/
 test/fixtures/generated/
+docs
 
 # Secrets: local dev vars, live-test credentials, private notes
 .dev.vars

@@ -34,8 +34,8 @@ export function useThread(id: number | null) {
 export type Action = 'read' | 'unread' | 'star' | 'unstar' | 'archive' | 'inbox' | 'spam' | 'notspam' | 'trash' | 'delete' | 'snooze' | 'unsnooze' | 'label' | 'unlabel' | 'assign';
 
 const REMOVES: Record<string, (view: string) => boolean> = {
-  archive: (v) => v !== 'archive' && !v.startsWith('label-') && v !== 'sent' && v !== 'starred',
-  inbox: (v) => v !== 'inbox',
+  archive: (v) => v !== 'archive' && v !== 'allmail' && !v.startsWith('label-') && v !== 'sent' && v !== 'starred',
+  inbox: (v) => v !== 'inbox' && v !== 'allmail',
   spam: () => true,
   notspam: (v) => v === 'spam',
   trash: (v) => v !== 'trash',

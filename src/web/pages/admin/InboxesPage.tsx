@@ -92,9 +92,9 @@ export function InboxesPage() {
               value={kind}
               onChange={setKind}
               options={[
-                { value: 'all', label: `All ${counts.all}` },
-                { value: 'personal', label: `Personal ${counts.personal}` },
-                { value: 'shared', label: `Shared ${counts.shared}` },
+                { value: 'all', label: 'All', count: counts.all },
+                { value: 'personal', label: 'Personal', count: counts.personal },
+                { value: 'shared', label: 'Shared', count: counts.shared },
               ]}
             />
           </div>
@@ -344,7 +344,7 @@ function InboxDetail({ mailbox, domains }: { mailbox: MailboxAdmin; domains: Dom
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold text-danger">Delete this inbox and all its mail</div>
               <div className="text-[12.5px] text-muted text-pretty">
-                {num(mailbox.threads)} conversations, attachments and {mailbox.aliases.length} {mailbox.aliases.length === 1 ? 'alias' : 'aliases'} are removed permanently. Export it first from Mail settings if you need a copy.
+                {num(mailbox.threads)} conversations, attachments and {mailbox.aliases.length} {mailbox.aliases.length === 1 ? 'alias' : 'aliases'} are removed permanently. Export it first from Settings → Import &amp; export if you need a copy.
               </div>
             </div>
             <Button variant="danger" onClick={() => setConfirmDelete(true)}>

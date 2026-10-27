@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router';
 import { zipSync } from 'fflate';
 import { CalendarClock, Download, FileUp, Funnel, PenLine, Plus, Tag, Trash, Forward } from 'lucide-react';
 import { del, get, patch, post, put, api, errorText } from '../../lib/api';
@@ -29,23 +30,34 @@ interface Filter {
   enabled: boolean;
 }
 
-export function MailboxSettings() {
+export type MailSection = 'signature' | 'auto-reply' | 'forwarding' | 'labels' | 'filters' | 'import-export';
+
+export const MAIL_SECTIONS: { id: MailSection; label: string; description: string }[] = [
+  { id: 'signature', label: 'Signature', description: 'Your sender name and the signature added to new messages and replies.' },
+  { id: 'auto-reply', label: 'Auto-reply', description: "Answer incoming mail automatically, for example while you're away. Each sender gets it at most once every 4 days; mailing lists never do." },
+  { id: 'forwarding', label: 'Forwarding', description: 'Keep a copy here and forward every message to another address. Forwarding goes through Cloudflare, not your sending quota.' },
+  { id: 'labels', label: 'Labels', description: 'Organize conversations. Filters can apply labels automatically.' },
+  { id: 'filters', label: 'Filters', description: 'Rules applied to new mail as it arrives, in order.' },
+  { id: 'import-export', label: 'Import & export', description: 'Bring mail from another account as .eml files, or download everything in this inbox as a zip of .eml files.' },
+];
+
+// One mail section for one inbox. The inbox comes from ?inbox= so the choice survives switching
+// sections.
+export function MailboxSettings({ section }: { section: MailSection }) {
   const boxes = useQuery({ queryKey: ['mailboxes'], queryFn: () => get<Mailbox[]>('/mailboxes') });
-  const [id, setId] = useState<number | null>(null);
-  useEffect(() => {
-    if (!id && boxes.data?.[0]) setId(boxes.data[0].id);
-  }, [boxes.data, id]);
+  const [params, setParams] = useSearchParams();
+  const meta = MAIL_SECTIONS.find((s) => s.id === section)!;
   if (boxes.isLoading) return <PageSpinner />;
   if (!boxes.data?.length) return <EmptyState title="No inboxes">Ask an admin to give you access to an inbox.</EmptyState>;
-  const box = boxes.data.find((b) => b.id === id) ?? boxes.data[0];
+  const box = boxes.data.find((b) => b.id === Number(params.get('inbox'))) ?? boxes.data[0];
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Mail settings"
-        description="Per inbox: signature, auto-reply, forwarding, labels, filters, import and export."
+        title={meta.label}
+        description={meta.description}
         actions={
           boxes.data.length > 1 && (
-            <Select value={box.id} onChange={(e) => setId(Number(e.target.value))} className="min-w-64">
+            <Select value={box.id} onChange={(e) => setParams({ inbox: e.target.value }, { replace: true })} className="min-w-64" aria-label="Inbox">
               {boxes.data.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.address}
@@ -55,15 +67,17 @@ export function MailboxSettings() {
           )
         }
       />
-      <BoxSettingsCards box={box} key={box.id} />
-      <Labels box={box} />
-      <Filters box={box} />
-      <ImportExport box={box} />
+      {section === 'signature' && <Signature box={box} key={box.id} />}
+      {section === 'auto-reply' && <AutoReply box={box} key={box.id} />}
+      {section === 'forwarding' && <Forwarding box={box} key={box.id} />}
+      {section === 'labels' && <Labels box={box} key={box.id} />}
+      {section === 'filters' && <Filters box={box} key={box.id} />}
+      {section === 'import-export' && <ImportExport box={box} key={box.id} />}
     </div>
   );
 }
 
-function BoxSettingsCards({ box }: { box: Mailbox }) {
+function useBoxSettings(box: Mailbox) {
   const q = useQuery({ queryKey: ['box-settings', box.id], queryFn: () => get<BoxSettings>(`/mailboxes/${box.id}/settings`) });
   const [s, setS] = useState<BoxSettings | null>(null);
   const { run, busy } = useAction();
@@ -71,83 +85,109 @@ function BoxSettingsCards({ box }: { box: Mailbox }) {
   useEffect(() => {
     if (q.data) setS(q.data);
   }, [q.data]);
-  if (!s) return <PageSpinner />;
-  const reply = s.autoReply ?? { enabled: false, subject: '', body: '' };
   const save = (key: string, body: Partial<BoxSettings>, msg: string) =>
     run(key, () => patch(`/mailboxes/${box.id}/settings`, body).then(() => invalidate(['box-settings', box.id], ['mailboxes'])), msg);
-  const toLocal = (ms?: number | null) => (ms ? new Date(ms - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : '');
+  return { s, setS, save, busy };
+}
 
+function Signature({ box }: { box: Mailbox }) {
+  const { s, setS, save, busy } = useBoxSettings(box);
+  if (!s) return <PageSpinner />;
   return (
-    <>
-      <Card>
-        <CardHeader icon={<PenLine className="h-5 w-5" />} title="Name and signature" description="Added to new messages and replies from this inbox." />
-        <div className="space-y-4 p-5">
-          <Field label="Sender name">
-            <Input value={s.displayName} onChange={(e) => setS({ ...s, displayName: e.target.value })} disabled={!box.canSend} />
+    <Card>
+      <CardHeader icon={<PenLine className="h-5 w-5" />} title="Name and signature" description={box.canSend ? undefined : 'You can read this inbox but not send from it.'} />
+      <div className="space-y-4 p-5">
+        <Field label="Sender name">
+          <Input value={s.displayName} onChange={(e) => setS({ ...s, displayName: e.target.value })} disabled={!box.canSend} />
+        </Field>
+        <Field label="Signature" hint="Plain text or simple HTML (links, bold, line breaks).">
+          <Textarea value={s.signature} onChange={(e) => setS({ ...s, signature: e.target.value })} rows={4} className="font-mono text-[13px]" disabled={!box.canSend} />
+        </Field>
+        {s.signature && (
+          <div>
+            <div className="mb-1.5 text-[12.5px] font-medium">Preview</div>
+            <div className="rounded-lg border border-border bg-surface-2 p-3 text-[13px]" dangerouslySetInnerHTML={{ __html: sanitizeSignature(s.signature) }} />
+          </div>
+        )}
+        <div className="flex justify-end">
+          <Button variant="primary" disabled={!box.canSend} loading={busy === 'sig'} onClick={() => save('sig', { displayName: s.displayName, signature: sanitizeSignature(s.signature) }, 'Saved')}>
+            Save
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function AutoReply({ box }: { box: Mailbox }) {
+  const { s, setS, save, busy } = useBoxSettings(box);
+  if (!s) return <PageSpinner />;
+  const reply = s.autoReply ?? { enabled: false, subject: '', body: '' };
+  const toLocal = (ms?: number | null) => (ms ? new Date(ms - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : '');
+  return (
+    <Card>
+      <CardHeader
+        icon={<CalendarClock className="h-5 w-5" />}
+        title="Send an automatic reply"
+        description={reply.enabled ? 'On. Save to apply your changes.' : 'Off'}
+        action={<Switch checked={reply.enabled} onChange={(v) => setS({ ...s, autoReply: { ...reply, enabled: v } })} disabled={!box.canSend} label="Auto-reply" />}
+      />
+      <div className="space-y-4 p-5">
+        <Field label="Subject" hint="Leave empty to use “Re: <their subject>”.">
+          <Input value={reply.subject} onChange={(e) => setS({ ...s, autoReply: { ...reply, subject: e.target.value } })} />
+        </Field>
+        <Field label="Message">
+          <Textarea value={reply.body} onChange={(e) => setS({ ...s, autoReply: { ...reply, body: e.target.value } })} rows={4} placeholder="Thanks for your email. I'm away until Monday and will reply when I'm back." />
+        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Start (optional)">
+            <Input type="datetime-local" value={toLocal(reply.startAt)} onChange={(e) => setS({ ...s, autoReply: { ...reply, startAt: e.target.value ? new Date(e.target.value).getTime() : null } })} />
           </Field>
-          <Field label="Signature" hint="Plain text or simple HTML (links, bold, line breaks).">
-            <Textarea value={s.signature} onChange={(e) => setS({ ...s, signature: e.target.value })} rows={4} className="font-mono text-[13px]" disabled={!box.canSend} />
+          <Field label="End (optional)">
+            <Input type="datetime-local" value={toLocal(reply.endAt)} onChange={(e) => setS({ ...s, autoReply: { ...reply, endAt: e.target.value ? new Date(e.target.value).getTime() : null } })} />
           </Field>
-          {s.signature && <div className="rounded-lg border border-border bg-surface-2 p-3 text-[13px]" dangerouslySetInnerHTML={{ __html: sanitizeSignature(s.signature) }} />}
+        </div>
+        <p className="text-xs text-muted">Auto-replies are sent through your sending provider and count toward its limits.</p>
+        <div className="flex justify-end">
+          <Button variant="primary" disabled={!box.canSend} loading={busy === 'auto'} onClick={() => save('auto', { autoReply: { ...reply, body: reply.body } }, reply.enabled ? 'Auto-reply is on' : 'Saved')}>
+            Save
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function Forwarding({ box }: { box: Mailbox }) {
+  const { s, setS, save, busy } = useBoxSettings(box);
+  if (!s) return <PageSpinner />;
+  return (
+    <Card>
+      <CardHeader icon={<Forward className="h-5 w-5" />} title="Forward a copy to" />
+      <div className="space-y-3 p-5">
+        {s.destinations.length === 0 ? (
+          <Alert tone="neutral">No forwarding addresses yet. An admin adds and verifies them in Admin → Settings → Forwarding addresses.</Alert>
+        ) : (
+          s.destinations.map((d) => (
+            <Checkbox
+              key={d.address}
+              disabled={!d.verified}
+              label={d.address}
+              hint={d.verified ? undefined : 'Waiting for the owner to click the verification link'}
+              checked={s.forwardTo.includes(d.address)}
+              onChange={(v) => setS({ ...s, forwardTo: v ? [...s.forwardTo, d.address] : s.forwardTo.filter((x) => x !== d.address) })}
+            />
+          ))
+        )}
+        {s.destinations.length > 0 && (
           <div className="flex justify-end">
-            <Button variant="primary" disabled={!box.canSend} loading={busy === 'sig'} onClick={() => save('sig', { displayName: s.displayName, signature: sanitizeSignature(s.signature) }, 'Saved')}>
+            <Button variant="primary" disabled={!box.canSend} loading={busy === 'fwd'} onClick={() => save('fwd', { forwardTo: s.forwardTo }, 'Forwarding saved')}>
               Save
             </Button>
           </div>
-        </div>
-      </Card>
-      <Card>
-        <CardHeader icon={<CalendarClock className="h-5 w-5" />} title="Auto-reply" description="Answer incoming mail automatically, for example while you're away. Each sender gets it at most once every 4 days; mailing lists never do." action={<Switch checked={reply.enabled} onChange={(v) => setS({ ...s, autoReply: { ...reply, enabled: v } })} disabled={!box.canSend} />} />
-        <div className="space-y-4 p-5">
-          <Field label="Subject" hint="Leave empty to use “Re: <their subject>”.">
-            <Input value={reply.subject} onChange={(e) => setS({ ...s, autoReply: { ...reply, subject: e.target.value } })} />
-          </Field>
-          <Field label="Message">
-            <Textarea value={reply.body} onChange={(e) => setS({ ...s, autoReply: { ...reply, body: e.target.value } })} rows={4} placeholder="Thanks for your email. I'm away until Monday and will reply when I'm back." />
-          </Field>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Start (optional)">
-              <Input type="datetime-local" value={toLocal(reply.startAt)} onChange={(e) => setS({ ...s, autoReply: { ...reply, startAt: e.target.value ? new Date(e.target.value).getTime() : null } })} />
-            </Field>
-            <Field label="End (optional)">
-              <Input type="datetime-local" value={toLocal(reply.endAt)} onChange={(e) => setS({ ...s, autoReply: { ...reply, endAt: e.target.value ? new Date(e.target.value).getTime() : null } })} />
-            </Field>
-          </div>
-          <p className="text-xs text-muted">Auto-replies are sent through your sending provider and count toward its limits.</p>
-          <div className="flex justify-end">
-            <Button variant="primary" disabled={!box.canSend} loading={busy === 'auto'} onClick={() => save('auto', { autoReply: { ...reply, body: reply.body } }, reply.enabled ? 'Auto-reply is on' : 'Saved')}>
-              Save
-            </Button>
-          </div>
-        </div>
-      </Card>
-      <Card>
-        <CardHeader icon={<Forward className="h-5 w-5" />} title="Forwarding" description="Keep a copy here and forward every message to another address. Free: forwarding goes through Cloudflare, not your sending quota." />
-        <div className="space-y-3 p-5">
-          {s.destinations.length === 0 ? (
-            <Alert tone="neutral">No forwarding addresses yet. An admin adds and verifies them in Admin → Settings → Forwarding addresses.</Alert>
-          ) : (
-            s.destinations.map((d) => (
-              <Checkbox
-                key={d.address}
-                disabled={!d.verified}
-                label={d.address}
-                hint={d.verified ? undefined : 'Waiting for the owner to click the verification link'}
-                checked={s.forwardTo.includes(d.address)}
-                onChange={(v) => setS({ ...s, forwardTo: v ? [...s.forwardTo, d.address] : s.forwardTo.filter((x) => x !== d.address) })}
-              />
-            ))
-          )}
-          {s.destinations.length > 0 && (
-            <div className="flex justify-end">
-              <Button variant="primary" disabled={!box.canSend} loading={busy === 'fwd'} onClick={() => save('fwd', { forwardTo: s.forwardTo }, 'Forwarding saved')}>
-                Save
-              </Button>
-            </div>
-          )}
-        </div>
-      </Card>
-    </>
+        )}
+      </div>
+    </Card>
   );
 }
 
@@ -170,7 +210,7 @@ function Labels({ box }: { box: Mailbox }) {
   const refresh = () => invalidate(['mailboxes'], ['threads']);
   return (
     <Card>
-      <CardHeader icon={<Tag className="h-5 w-5" />} title="Labels" description="Organize conversations; filters can apply them automatically." />
+      <CardHeader icon={<Tag className="h-5 w-5" />} title="Your labels" description="Click a label to rename, recolor or delete it." />
       <div className="space-y-4 p-5">
         <div className="flex flex-wrap gap-2">
           {box.labels.length === 0 && <span className="text-[13px] text-muted">No labels yet.</span>}
@@ -255,7 +295,7 @@ function Filters({ box }: { box: Mailbox }) {
   };
   return (
     <Card>
-      <CardHeader icon={<Funnel className="h-5 w-5" />} title="Filters" description="Rules applied to new mail as it arrives, in order." action={<Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setEditing({ conditions: { match: 'all' }, actions: {}, enabled: true, name: '' })}>New filter</Button>} />
+      <CardHeader icon={<Funnel className="h-5 w-5" />} title="Rules" action={<Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setEditing({ conditions: { match: 'all' }, actions: {}, enabled: true, name: '' })}>New filter</Button>} />
       <div className="divide-y divide-border">
         {q.data?.length === 0 && <div className="px-5 py-4 text-[13px] text-muted">No filters yet.</div>}
         {q.data?.map((f) => (
@@ -396,7 +436,7 @@ function ImportExport({ box }: { box: Mailbox }) {
 
   return (
     <Card>
-      <CardHeader icon={<Download className="h-5 w-5" />} title="Import and export" description="Bring mail from another account as .eml files, or download everything in this inbox as a zip of .eml files." />
+      <CardHeader icon={<Download className="h-5 w-5" />} title="Your mail as .eml files" description="Imported messages go to Archive." />
       <div className="space-y-4 p-5">
         {error && <Alert tone="danger">{error}</Alert>}
         {progress && <Alert tone="neutral">{progress}</Alert>}

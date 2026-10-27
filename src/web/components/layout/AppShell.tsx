@@ -3,12 +3,13 @@ import { NavLink, Outlet, useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { Command, Inbox, Keyboard, LayoutGrid, LogOut, Monitor, Moon, Settings, Sun, UserRound } from 'lucide-react';
 import { useSession } from '../../lib/session';
-import { post } from '../../lib/api';
+import { errorText, post } from '../../lib/api';
+import type { Session } from '../../lib/types';
 import { useTheme, type Theme } from '../../lib/theme';
 import { cn } from '../../lib/utils';
 import { CommandPalette, KeyCombo, SHORTCUTS } from '../../pages/mail/CommandPalette';
 import { LogoMark } from '../Logo';
-import { Dialog, Menu, MenuItem, MenuLabel, MenuSeparator } from '../ui/overlay';
+import { Dialog, Menu, MenuItem, MenuLabel, MenuSeparator, useToast } from '../ui/overlay';
 import { Avatar, Kbd } from '../ui/misc';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -19,6 +20,7 @@ export function AppShell() {
   const [theme, setTheme] = useTheme();
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const toast = useToast();
   const isAdmin = user?.role === 'owner' || user?.role === 'admin';
   const [palette, setPalette] = useState(false);
   const [help, setHelp] = useState(false);
@@ -41,10 +43,17 @@ export function AppShell() {
   }, []);
 
   const signOut = async () => {
-    await post('/auth/logout');
-    qc.clear();
-    navigate('/login');
-    qc.invalidateQueries({ queryKey: ['session'] });
+    try {
+      await post('/auth/logout');
+    } catch (e) {
+      toast.error(errorText(e));
+      return;
+    }
+    // Mark the session signed out in place and drop everything else. (Clearing the whole cache
+    // orphaned the session query, so the app kept the old user and never reached the login page.)
+    navigate('/login', { replace: true });
+    qc.setQueryData<Session>(['session'], (s) => (s ? { ...s, user: null } : s));
+    qc.removeQueries({ predicate: (q) => q.queryKey[0] !== 'session' });
   };
 
   const nav = (to: string, label: string, Icon: typeof Inbox) => (
@@ -105,10 +114,10 @@ export function AppShell() {
             </div>
           </div>
           <MenuSeparator />
-          <MenuItem icon={<UserRound />} onClick={() => navigate('/settings/account')}>
+          <MenuItem icon={<UserRound />} onClick={() => navigate('/settings/profile')}>
             Account
           </MenuItem>
-          <MenuItem icon={<Settings />} onClick={() => navigate('/settings/mailboxes')}>
+          <MenuItem icon={<Settings />} onClick={() => navigate('/settings/signature')}>
             Mail settings
           </MenuItem>
           <MenuItem icon={<Keyboard />} onClick={() => setHelp(true)} hint={<Kbd>?</Kbd>}>

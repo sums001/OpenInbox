@@ -1,11 +1,10 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import {
   Activity,
   ArrowRight,
   ArrowUpRight,
-  Circle,
   CircleCheck,
   CircleX,
   Database,
@@ -33,7 +32,7 @@ import { PROVIDER_INFO } from '../../../shared/constants';
 import { BarChart, Gauge, Sparkline } from '../../components/charts';
 import { Card, CardHeader, EmptyState, IconTile, Meter, PageHeader, PageSpinner, Skeleton, StatusDot } from '../../components/ui/misc';
 import { Button } from '../../components/ui/button';
-import { cn } from '../../lib/utils';
+import { cn, storageGet, storageSet } from '../../lib/utils';
 import { ActivityRow } from './ActivityPage';
 import { useOverview } from './data';
 
@@ -42,6 +41,7 @@ export function OverviewPage() {
   const navigate = useNavigate();
   const overview = useOverview(true);
   const usage = useQuery({ queryKey: ['admin', 'usage'], queryFn: () => get<CloudflareUsage>('/admin/usage'), staleTime: 5 * 60_000 });
+  const [checklistHidden, setChecklistHidden] = useState(() => storageGet('oi.checklist.hidden', false));
   const o = overview.data;
   if (overview.isLoading) return <PageSpinner />;
   if (!o)
@@ -62,7 +62,10 @@ export function OverviewPage() {
       </Card>
     );
 
-  const pending = o.checklist.filter((c) => !c.done && !c.optional);
+  // The checklist stays until everything is done; once the required steps are, it can be hidden.
+  const requiredLeft = o.checklist.some((c) => !c.done && !c.optional);
+  const anyLeft = o.checklist.some((c) => !c.done);
+  const showChecklist = requiredLeft || (anyLeft && !checklistHidden);
   const series = o.stats.series;
   const p = o.problems;
   const problems = p.unparsed + p.failed + p.domainErrors + p.providerErrors;
@@ -109,7 +112,19 @@ export function OverviewPage() {
         </div>
       )}
 
-      {pending.length > 0 && <Checklist items={o.checklist} />}
+      {showChecklist && (
+        <Checklist
+          items={o.checklist}
+          onHide={
+            requiredLeft
+              ? undefined
+              : () => {
+                  setChecklistHidden(true);
+                  storageSet('oi.checklist.hidden', true);
+                }
+          }
+        />
+      )}
 
       <div className="mt-1 flex flex-wrap items-baseline justify-between gap-2">
         <span className="text-sm font-semibold">At a glance</span>
@@ -225,7 +240,7 @@ export function OverviewPage() {
   );
 }
 
-function Checklist({ items }: { items: Overview['checklist'] }) {
+function Checklist({ items, onHide }: { items: Overview['checklist']; onHide?: () => void }) {
   const done = items.filter((i) => i.done).length;
   return (
     <Card className="overflow-hidden">
@@ -240,17 +255,31 @@ function Checklist({ items }: { items: Overview['checklist'] }) {
           </div>
         </div>
         <Meter value={done} max={items.length} tone="primary" className="w-[180px] max-sm:hidden" />
+        {onHide && (
+          <button type="button" onClick={onHide} className="grid h-7 w-7 place-items-center rounded-md text-faint hover:bg-surface-2 hover:text-fg" aria-label="Hide the checklist" title="Hide the checklist">
+            <X className="h-4 w-4" />
+          </button>
+        )}
       </div>
-      <div className="grid border-t border-border sm:grid-cols-2 lg:grid-cols-4">
-        {items.map((i) => (
-          <Link key={i.id} to={i.href} className="group flex items-start gap-2.5 border-border px-[18px] py-3.5 transition-colors not-last:border-b hover:bg-surface-2 sm:border-r sm:not-last:border-b-0">
-            {i.done ? <CircleCheck className="mt-px h-[17px] w-[17px] shrink-0 text-success" /> : <Circle className="mt-px h-[17px] w-[17px] shrink-0 text-border-strong" />}
+      {/* Hairline grid: the gaps show the border color between cells. */}
+      <div className="grid gap-px border-t border-border bg-border sm:grid-cols-2 lg:grid-cols-3">
+        {items.map((i, n) => (
+          <Link key={i.id} to={i.href} className="group flex items-start gap-3 bg-surface px-[18px] py-3.5 transition-colors hover:bg-surface-2">
+            {i.done ? (
+              <CircleCheck className="mt-px h-[18px] w-[18px] shrink-0 text-success" />
+            ) : (
+              <span className="mt-px grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full border-[1.5px] border-border-strong text-[10px] font-semibold text-faint">{n + 1}</span>
+            )}
             <div className="min-w-0 flex-1">
-              <div className={cn('text-[13px] font-medium', i.done ? 'text-muted' : 'text-fg')}>{i.label}</div>
-              <div className="text-xs text-faint">{i.done ? 'Done' : i.optional ? 'Optional' : 'To do'}</div>
+              <div className={cn('text-[13px] font-medium', i.done ? 'text-muted line-through decoration-faint' : 'text-fg')}>{i.label}</div>
+              <div className={cn('text-xs', i.done ? 'text-success' : 'text-faint')}>{i.done ? 'Done' : i.optional ? 'Optional' : 'To do'}</div>
             </div>
-            {!i.done && <ArrowRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-faint transition-transform group-hover:translate-x-0.5" />}
+            {!i.done && <ArrowRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-faint transition-transform group-hover:translate-x-0.5 group-hover:text-primary-text" />}
           </Link>
+        ))}
+        {/* Fill the last row so the hairline grid has no empty gray cells. */}
+        {Array.from({ length: (3 - (items.length % 3)) % 3 }, (_, k) => (
+          <div key={k} className="hidden bg-surface lg:block" />
         ))}
       </div>
     </Card>

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ImageOff } from 'lucide-react';
 import { frameDocument, sanitizeMail } from '../../lib/sanitize';
+import { useIsDark } from '../../lib/theme';
+import { cn } from '../../lib/utils';
 import type { Attachment } from '../../lib/types';
 import { Button } from '../../components/ui/button';
 
@@ -21,10 +23,12 @@ export function MailFrame({
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(120);
-  const { doc, blocked } = useMemo(() => {
-    const s = sanitizeMail(html, { allowImages, attachments });
-    return { doc: frameDocument(s.html, { allowImages }), blocked: s.blockedImages };
-  }, [html, allowImages, attachments]);
+  const dark = useIsDark();
+  // In the dark theme, plain mail takes the app's colors; mail with its own design stays on white.
+  const { doc, blocked, darkened } = useMemo(() => {
+    const s = sanitizeMail(html, { allowImages, attachments, dark });
+    return { doc: frameDocument(s.html, { allowImages, dark: s.darkened }), blocked: s.blockedImages, darkened: s.darkened };
+  }, [html, allowImages, attachments, dark]);
 
   useEffect(() => {
     const el = frame.current;
@@ -67,7 +71,7 @@ export function MailFrame({
           )}
         </div>
       )}
-      <div className="overflow-hidden rounded-lg bg-white dark:px-3 dark:py-2">
+      <div className={cn('overflow-hidden rounded-lg', !darkened && 'bg-white dark:px-3 dark:py-2')}>
         <iframe
           ref={frame}
           title="Message"

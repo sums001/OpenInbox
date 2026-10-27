@@ -48,6 +48,20 @@ describe('inbound mail', () => {
     expect(log.map((l: { status: string }) => l.status).sort()).toEqual(['delivered', 'delivered', 'duplicate', 'rejected']);
   });
 
+  it('lists inbox and archived mail under All mail, but not Spam or Trash', async () => {
+    for (const [i, subject] of ['Kept in inbox', 'Archived', 'Spammy', 'Trashed'].entries()) {
+      await deliver(email({ subject, messageId: `all${i}@sender.test` }), { from: `s${i}@sender.test`, to: 'admin@example.com' });
+    }
+    const { threads } = await admin.get('/api/threads?mailbox=all&view=inbox');
+    const id = (subject: string) => threads.find((t: { subject: string }) => t.subject === subject).id;
+    await admin.post('/api/threads/actions', { threadIds: [id('Archived')], action: 'archive' });
+    await admin.post('/api/threads/actions', { threadIds: [id('Spammy')], action: 'spam' });
+    await admin.post('/api/threads/actions', { threadIds: [id('Trashed')], action: 'trash' });
+
+    const all = await admin.get('/api/threads?mailbox=all&view=allmail');
+    expect(all.threads.map((t: { subject: string }) => t.subject).sort()).toEqual(['Archived', 'Kept in inbox']);
+  });
+
   it('routes aliases, plus addresses and the catch-all, and applies spam rules and filters', async () => {
     const boxes = await admin.get('/api/admin/mailboxes');
     const adminBox = boxes[0];

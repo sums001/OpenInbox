@@ -4,7 +4,7 @@ import { useSession } from '../../lib/session';
 import { cn } from '../../lib/utils';
 import { useOverview } from './data';
 import { OverviewPage } from './OverviewPage';
-import { UsersPage } from './UsersPage';
+import { UserDetailPage, UsersPage } from './UsersPage';
 import { InboxDetailPage, InboxesPage } from './InboxesPage';
 import { DomainsPage } from './DomainsPage';
 import { IntegrationsPage } from './IntegrationsPage';
@@ -80,6 +80,7 @@ export default function AdminRoutes() {
         <Route path="inboxes" element={<InboxesPage />} />
         <Route path="inboxes/:id" element={<InboxDetailPage />} />
         <Route path="users" element={<UsersPage />} />
+        <Route path="users/:id" element={<UserDetailPage />} />
         <Route path="domains" element={<DomainsPage />} />
         <Route path="integrations" element={<IntegrationsPage />} />
         <Route path="mailflow" element={<MailFlowPage />} />
