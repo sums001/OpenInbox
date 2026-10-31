@@ -6,6 +6,7 @@ import { all, first } from '../db/db';
 import { dayKey, DAY } from '../lib/time';
 import { parseJson } from '../lib/json';
 import { allQuotaUse } from './quota';
+import { PROVIDER_INFO, type ProviderType } from '../../shared/constants';
 
 export async function overview(env: Env, settings: AppSettings) {
   const db = env.DB;
@@ -32,7 +33,7 @@ export async function overview(env: Env, settings: AppSettings) {
       db,
       'SELECT id, name, status, health, app_hostname, catch_all_mailbox_id FROM domains ORDER BY name',
     ),
-    all<{ id: number; type: string; name: string; status: string; daily_limit: number | null; monthly_limit: number | null; is_default: number; last_error: string | null }>(
+    all<{ id: number; type: ProviderType; name: string; status: string; daily_limit: number | null; monthly_limit: number | null; is_default: number; last_error: string | null }>(
       db,
       'SELECT id, type, name, status, daily_limit, monthly_limit, is_default, last_error FROM providers ORDER BY is_default DESC, priority',
     ),
@@ -62,7 +63,7 @@ export async function overview(env: Env, settings: AppSettings) {
   const checklist = [
     { id: 'domain', label: 'Receive mail on your domain', done: domains.some((d) => d.status === 'active'), href: '/admin/domains' },
     { id: 'provider', label: 'Connect a sending provider', done: hasProvider, href: '/admin/integrations' },
-    { id: 'sending', label: 'Verify your domain for sending', done: domains.some((d) => verifiedIds.has(d.id)) || providers.some((p) => p.type === 'smtp'), href: '/admin/domains' },
+    { id: 'sending', label: 'Verify your domain for sending', done: domains.some((d) => verifiedIds.has(d.id)) || providers.some((p) => !PROVIDER_INFO[p.type].hasDomainApi), href: '/admin/domains' },
     { id: 'users', label: 'Add your team or more inboxes', done: (counts?.mailboxes ?? 0) > 1 || (counts?.users ?? 0) > 1, href: '/admin/users', optional: true },
     { id: 'attachments', label: 'Enable attachments (R2)', done: settings.storageMode === 'r2', href: '/admin/integrations#storage', optional: true },
     { id: 'appdomain', label: 'Open the app on mail.yourdomain', done: domains.some((d) => !!d.app_hostname), href: '/admin/domains', optional: true },

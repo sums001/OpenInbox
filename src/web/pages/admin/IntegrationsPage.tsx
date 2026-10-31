@@ -29,10 +29,10 @@ export function IntegrationsPage() {
   );
 }
 
-const PROVIDER_ACCENT: Record<ProviderType, string> = { resend: '#111111', brevo: '#0b996e', mailjet: '#fea500', smtp: '#6366f1' };
+const PROVIDER_ACCENT: Record<ProviderType, string> = { resend: '#111111', brevo: '#0b996e', mailjet: '#fea500', cloudflare: '#f6821f', smtp: '#6366f1' };
 
 function ProviderMark({ type, size = 38 }: { type: ProviderType; size?: number }) {
-  const letter = { resend: 'R', brevo: 'B', mailjet: 'M', smtp: '@' }[type];
+  const letter = { resend: 'R', brevo: 'B', mailjet: 'M', cloudflare: 'C', smtp: '@' }[type];
   return (
     <div className="flex shrink-0 items-center justify-center rounded-[9px] font-bold text-white" style={{ width: size, height: size, background: PROVIDER_ACCENT[type], fontSize: size * 0.42 }}>
       {letter}
@@ -168,7 +168,7 @@ function ProviderCard({ provider: p, onChanged }: { provider: ProviderInfo; onCh
           <MenuItem icon={<Pencil />} onClick={() => setEditing(true)}>
             Edit limits and credentials
           </MenuItem>
-          {p.type !== 'smtp' && (
+          {PROVIDER_INFO[p.type].hasWebhookApi && (
             <MenuItem
               icon={<Webhook />}
               onClick={() =>
@@ -192,7 +192,7 @@ function ProviderCard({ provider: p, onChanged }: { provider: ProviderInfo; onCh
           </MenuItem>
         </Menu>
       </div>
-      {p.type !== 'smtp' && (p.domains.length > 0 || unconfigured.length > 0) && (
+      {PROVIDER_INFO[p.type].hasDomainApi && (p.domains.length > 0 || unconfigured.length > 0) && (
         <div className="border-t border-border">
           {p.domains.map((d) => (
             <div key={d.domainId} className="border-b border-border last:border-0">
@@ -255,9 +255,11 @@ function ProviderCard({ provider: p, onChanged }: { provider: ProviderInfo; onCh
           ))}
         </div>
       )}
-      {p.type === 'smtp' && (
+      {!PROVIDER_INFO[p.type].hasDomainApi && (
         <div className="border-t border-border px-5 py-3 text-xs text-muted text-pretty">
-          SMTP has no domain API: publish your SMTP provider's SPF and DKIM records for each domain yourself. Domain health shows whether SPF includes them.
+          {p.type === 'cloudflare'
+            ? 'Cloudflare has no sending-domain API: enable Email Sending for each domain in the Cloudflare dashboard (Email Service > Email Sending). Cloudflare manages SPF and DKIM once the domain is onboarded there.'
+            : "SMTP has no domain API: publish your SMTP provider's SPF and DKIM records for each domain yourself. Domain health shows whether SPF includes them."}
         </div>
       )}
       {editing && (
@@ -297,6 +299,7 @@ function ProviderCard({ provider: p, onChanged }: { provider: ProviderInfo; onCh
 }
 
 function credentialFields(type: ProviderType) {
+  if (type === 'cloudflare') return [];
   if (type === 'smtp')
     return [
       { key: 'host', label: 'SMTP server', placeholder: 'smtp.example.com' },
@@ -313,6 +316,7 @@ function credentialFields(type: ProviderType) {
 }
 
 const KEY_HELP: Record<ProviderType, { href: string; text: string }> = {
+  cloudflare: { href: 'https://developers.cloudflare.com/email-service/', text: 'Sends with the Cloudflare API token OpenInbox already uses, so there is no key to paste. Cloudflare requires a Workers Paid plan, and each sending domain has to be onboarded in the dashboard first.' },
   resend: { href: 'https://resend.com/api-keys', text: 'Create a key with Full access in Resend → API Keys (full access lets OpenInbox verify domains for you).' },
   brevo: { href: 'https://app.brevo.com/settings/keys/api', text: 'Create an API key in Brevo → SMTP & API → API Keys.' },
   mailjet: { href: 'https://app.mailjet.com/account/apikeys', text: 'Find your API key and secret key in Mailjet → Account settings → API Key Management.' },
@@ -366,7 +370,7 @@ function ConnectDialog({ type, onClose, onConnected }: { type: ProviderType; onC
       open
       onClose={result ? onConnected : onClose}
       title={`Connect ${info.label}`}
-      description={type === 'smtp' ? 'Any provider that gives you SMTP credentials.' : `Free tier: ${info.freeTier}.`}
+      description={type === 'smtp' ? 'Any provider that gives you SMTP credentials.' : type === 'cloudflare' ? 'Sends through Cloudflare with the API token you connected. No separate credentials.' : `Free tier: ${info.freeTier}.`}
       footerStart={!result && encrypted}
       footer={
         result ? (
@@ -503,7 +507,7 @@ function EditProviderDialog({ provider: p, onClose, onSaved }: { provider: Provi
             <Input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} />
           </Field>
         </div>
-        <div className="space-y-3 rounded-[10px] border border-border p-3.5">
+        {credentialFields(p.type).length > 0 && <div className="space-y-3 rounded-[10px] border border-border p-3.5">
           <div className="text-xs font-medium text-muted">Credentials (leave masked values to keep them)</div>
           {credentialFields(p.type).map((f) => (
             <Field key={f.key} label={f.label}>
@@ -518,7 +522,7 @@ function EditProviderDialog({ provider: p, onClose, onSaved }: { provider: Provi
               </Select>
             </Field>
           )}
-        </div>
+        </div>}
         {p.type === 'resend' && (
           <Field label="Webhook signing secret" hint="Only if you registered the webhook yourself in the Resend dashboard (whsec_…).">
             <Input value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="whsec_..." className="font-mono" />
