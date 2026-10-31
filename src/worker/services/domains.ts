@@ -1,6 +1,7 @@
 // Domain automation. Each step is idempotent and its state is saved in domains.setup_state, so
 // setup can resume after a failure or a closed tab, and "repair" simply runs the steps again.
 import type { Env } from '../env';
+import { PROVIDER_INFO, type ProviderType } from '../../shared/constants';
 import type { AppSettings } from '../db/settings';
 import { all, first, run } from '../db/db';
 import { CfError, cfFromEnv, type Cloudflare } from '../cloudflare/client';
@@ -343,7 +344,16 @@ export async function checkDomainHealth(env: Env, settings: AppSettings, domainI
       detail: p.status === 'verified' ? 'Domain verified.' : p.last_error || 'Waiting for verification.',
     });
   }
-  if (!providers.length) items.push({ key: 'provider', label: 'Sending', status: 'warn', detail: 'No sending provider set up for this domain yet.' });
+  if (!providers.length) {
+    // Cloudflare and SMTP have no domain API: once connected they can send for any domain, so there
+    // is nothing to verify and no row in provider_domains.
+    const noApi = (await all<{ name: string; type: string }>(env.DB, 'SELECT name, type FROM providers')).filter((p) => !PROVIDER_INFO[p.type as ProviderType].hasDomainApi);
+    items.push(
+      noApi.length
+        ? { key: 'provider', label: 'Sending', status: 'ok', detail: `Handled by ${noApi.map((p) => p.name).join(', ')}; no per-domain verification.` }
+        : { key: 'provider', label: 'Sending', status: 'warn', detail: 'No sending provider set up for this domain yet.' },
+    );
+  }
 
   let conflicts: DomainHealth['conflicts'];
   try {

@@ -5,6 +5,7 @@ import { del, get, patch, post, errorText } from '../../lib/api';
 import { timeAgo } from '../../lib/format';
 import { useAction, useInvalidate } from '../../lib/hooks';
 import { cn } from '../../lib/utils';
+import { PROVIDER_INFO } from '../../../shared/constants';
 import type { DomainInfo, DomainSetupStep, MailboxAdmin, ProviderInfo, ZoneInspection } from '../../lib/types';
 import { Button, IconButton } from '../../components/ui/button';
 import { Checkbox, Field, Select } from '../../components/ui/form';
@@ -125,9 +126,11 @@ function DomainCard({ domain: d, mailboxes, providers, onChanged }: { domain: Do
     }
   };
 
-  // Sending is verified per provider; the domain sends once any provider has verified it.
+  // Sending is verified per provider; the domain sends once any provider has verified it, or once a
+  // provider that has no domain API (Cloudflare, SMTP) is connected.
   const sending = providers.flatMap((p) => p.domains.filter((x) => x.domainId === d.id));
-  const sendState = sending.some((x) => x.status === 'verified') ? 'ok' : sending.some((x) => x.status === 'pending') ? 'pending' : 'off';
+  const noDomainApi = providers.some((p) => !PROVIDER_INFO[p.type].hasDomainApi);
+  const sendState = sending.some((x) => x.status === 'verified') ? 'ok' : sending.some((x) => x.status === 'pending') ? 'pending' : noDomainApi ? 'ok' : 'off';
   const issues = health?.items.filter((h) => h.status !== 'ok') ?? [];
   const errors = issues.filter((h) => h.status === 'error');
   const tone = d.status === 'error' || errors.length ? 'danger' : !d.setup.done || d.status === 'pending' || issues.length ? 'warning' : d.status === 'active' ? 'success' : 'neutral';

@@ -5,11 +5,12 @@ import { Client, deliver, email, setupInstance } from '../helpers/client';
 describe('Cloudflare Email Sending provider', () => {
   let admin: Client;
   let fake: ReturnType<typeof useFakeApis>;
+  let domainId: number;
 
   beforeEach(async () => {
     fake = useFakeApis();
     admin = new Client();
-    await setupInstance(admin);
+    ({ domainId } = await setupInstance(admin));
   });
 
   it('connects with the stored Cloudflare token and sends through the API', async () => {
@@ -51,6 +52,14 @@ describe('Cloudflare Email Sending provider', () => {
     });
     const after = await admin.get(`/api/threads/${threads[0].id}`);
     expect(after.messages.map((m: { direction: string }) => m.direction)).toEqual(['out', 'in']);
+  });
+
+  it('counts as sending for the domain without a per-domain verified row', async () => {
+    await admin.post('/api/admin/providers', { type: 'cloudflare', config: {} });
+    const health = await admin.post(`/api/admin/domains/${domainId}/check`, {});
+    const sending = health.items.find((i: { key: string }) => i.key === 'provider');
+    expect(sending).toMatchObject({ status: 'ok' });
+    expect(sending.detail).toMatch(/Cloudflare/);
   });
 
   it('says the account needs Workers Paid instead of a bare Cloudflare error', async () => {
