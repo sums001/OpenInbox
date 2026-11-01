@@ -28,6 +28,7 @@ import { badRequest, conflict, errorMessage, HttpError, notFound } from '../lib/
 import { decrypt, encrypt, encryptJson } from '../lib/crypto';
 import { newId } from '../lib/ids';
 import { parseJson } from '../lib/json';
+import { PROVIDER_INFO } from '../../shared/constants';
 import { audit } from '../services/audit';
 import { overview } from '../services/overview';
 import { cloudflareUsage, growthEstimate, storageSummary } from '../services/usage';
@@ -313,7 +314,9 @@ admin.post('/providers', async (c) => {
   const r = await connectProvider(c.env, settings, input);
   await audit(c.env.DB, { userId: currentUser(c).id, action: 'provider.connected', target: input.type, ip: clientIp(c) });
   // Set up sending for every domain right away; failures show per domain and can be retried.
-  const domains = await all<{ id: number }>(c.env.DB, "SELECT id FROM domains WHERE status != 'disabled'");
+  // Providers with no domain API (Cloudflare, SMTP) onboard domains elsewhere, so there is nothing
+  // to register here.
+  const domains = PROVIDER_INFO[input.type].hasDomainApi ? await all<{ id: number }>(c.env.DB, "SELECT id FROM domains WHERE status != 'disabled'") : [];
   const results = [];
   for (const d of domains) {
     try {

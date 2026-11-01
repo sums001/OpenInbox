@@ -4,6 +4,7 @@
 //   -> send with our own Message-ID, also appended to References -> archive the sent .eml and store
 //   the provider message ID, or mark failed (retryable failures retry from cron with backoff).
 import type { Env } from '../env';
+import { PROVIDER_INFO } from '../../shared/constants';
 import { loadSettings, type AppSettings } from '../db/settings';
 import { all, first, placeholders, run } from '../db/db';
 import { newId } from '../lib/ids';
@@ -301,8 +302,9 @@ async function providerCandidates(db: D1Database, fromDomain: string): Promise<P
     domain.provider_id ?? -1,
   );
   if (!rows.length) throw new HttpError(409, 'no_provider', 'Connect a sending provider first (Admin > Integrations).');
-  // SMTP has no domain verification; the others need the domain verified with them.
-  const usable = rows.filter((p) => p.type === 'smtp' || p.pd_status === 'verified');
+  // Providers without a domain API (SMTP, Cloudflare) have nothing to verify here; the rest need
+  // the domain verified with them.
+  const usable = rows.filter((p) => !PROVIDER_INFO[p.type].hasDomainApi || p.pd_status === 'verified');
   if (!usable.length) throw new HttpError(409, 'domain_not_verified', `${fromDomain} is not verified with a sending provider yet (Admin > Domains).`);
   return domain.provider_id ? usable.filter((p) => p.id === domain.provider_id).concat(usable.filter((p) => p.id !== domain.provider_id)) : usable;
 }

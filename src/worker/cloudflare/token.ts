@@ -93,6 +93,9 @@ export async function checkPermissions(cf: Cloudflare, accountId: string, zoneId
         : Promise.resolve(noZone),
     workers_scripts: () => probe(() => cf.get(`/accounts/${accountId}/workers/scripts`)),
     email_routing_addresses: () => probe(() => cf.get(`/accounts/${accountId}/email/routing/addresses?per_page=5`)),
+    // 10105 means the permission is there but the account is not on Workers Paid: that is an
+    // account state, not a missing permission.
+    email_sending: () => probe(() => cf.get(`/accounts/${accountId}/email/sending/suppressions?per_page=1`), [10105]),
     account_analytics: () =>
       probe(() =>
         cf.graphql(

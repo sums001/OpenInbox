@@ -34,7 +34,7 @@ export const DEFAULT_SETTINGS = {
 export type SpamPolicy = 'spam' | 'reject' | 'off';
 export type RemoteImagesPolicy = 'block' | 'allow';
 
-export const PROVIDER_TYPES = ['resend', 'brevo', 'mailjet', 'smtp'] as const;
+export const PROVIDER_TYPES = ['resend', 'brevo', 'mailjet', 'cloudflare', 'smtp'] as const;
 export type ProviderType = (typeof PROVIDER_TYPES)[number];
 
 // Free-tier sending caps, used as defaults when a provider is connected. Users can change them.
@@ -45,6 +45,7 @@ export const PROVIDER_INFO: Record<ProviderType, {
   monthlyLimit: number | null;
   freeTier: string;
   hasDomainApi: boolean;
+  hasWebhookApi: boolean;
 }> = {
   resend: {
     label: 'Resend',
@@ -53,6 +54,7 @@ export const PROVIDER_INFO: Record<ProviderType, {
     monthlyLimit: 3000,
     freeTier: '3,000 emails/month, 100/day',
     hasDomainApi: true,
+    hasWebhookApi: true,
   },
   brevo: {
     label: 'Brevo',
@@ -61,6 +63,7 @@ export const PROVIDER_INFO: Record<ProviderType, {
     monthlyLimit: null,
     freeTier: '300 emails/day',
     hasDomainApi: true,
+    hasWebhookApi: true,
   },
   mailjet: {
     label: 'Mailjet',
@@ -69,6 +72,16 @@ export const PROVIDER_INFO: Record<ProviderType, {
     monthlyLimit: 6000,
     freeTier: '6,000 emails/month, 200/day',
     hasDomainApi: true,
+    hasWebhookApi: true,
+  },
+  cloudflare: {
+    label: 'Cloudflare',
+    website: 'https://developers.cloudflare.com/email-service/',
+    dailyLimit: null,
+    monthlyLimit: 3000,
+    freeTier: '3,000 emails/month on Workers Paid',
+    hasDomainApi: false,
+    hasWebhookApi: false,
   },
   smtp: {
     label: 'SMTP',
@@ -77,6 +90,7 @@ export const PROVIDER_INFO: Record<ProviderType, {
     monthlyLimit: null,
     freeTier: 'Depends on your provider',
     hasDomainApi: false,
+    hasWebhookApi: false,
   },
 };
 
@@ -104,6 +118,7 @@ export const TOKEN_PERMISSIONS = [
   { key: 'analytics', id: '9c88f9c5bce24ce7af9a958ba9c504db', type: 'read', scope: 'Zone', name: 'Analytics', access: 'Read', why: 'Show Email Routing delivery logs', optional: true },
   { key: 'workers_scripts', id: 'e086da7e2179491d91ee5f35b3ca210a', type: 'edit', scope: 'Account', name: 'Workers Scripts', access: 'Edit', why: 'Find this Worker and its database', optional: false },
   { key: 'email_routing_addresses', id: 'e4589eb09e63436686cd64252a3aebeb', type: 'edit', scope: 'Account', name: 'Email Routing Addresses', access: 'Edit', why: 'Verify addresses for forwarding', optional: true },
+  { key: 'email_sending', id: '5df633d6b41c42bcaf5b4a62b9d14b64', type: 'edit', scope: 'Account', name: 'Email Sending', access: 'Edit', why: 'Send through Cloudflare instead of another provider', optional: true },
   { key: 'account_analytics', id: 'b89a480218d04ceb98b4fe57ca29dc1f', type: 'read', scope: 'Account', name: 'Account Analytics', access: 'Read', why: 'Show free-tier usage on the dashboard', optional: true },
   { key: 'account_settings', id: 'c1fde68c7bcc44588cbb6ddbc16d6480', type: 'read', scope: 'Account', name: 'Account Settings', access: 'Read', why: 'Show your account name (recommended)', optional: true },
   { key: 'workers_r2', id: 'bf7481a1826f439697cb59a20b22293e', type: 'edit', scope: 'Account', name: 'Workers R2 Storage', access: 'Edit', why: 'Create the attachments bucket (optional feature)', optional: true },
