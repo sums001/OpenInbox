@@ -39,6 +39,7 @@ export interface FakeState {
   resend: { domains: { id: string; name: string; status: string; records: Record<string, unknown>[] }[]; emails: Record<string, unknown>[]; failNext: number; webhooks: string[] };
   brevo: { domains: Record<string, { id: number; authenticated: boolean }>; emails: Record<string, unknown>[]; credits: number };
   mailjet: { dns: Record<string, { id: number }>; emails: Record<string, unknown>[] };
+  cfSending: { entitled: boolean; failNext: number; emails: Record<string, unknown>[] };
   release: { tag_name: string; html_url: string; body: string } | null;
   requests: { method: string; url: string; body?: unknown }[];
   seq: number;
@@ -72,6 +73,7 @@ export function createFakeState(): FakeState {
     resend: { domains: [], emails: [], failNext: 0, webhooks: [] },
     brevo: { domains: {}, emails: [], credits: 300 },
     mailjet: { dns: {}, emails: [] },
+    cfSending: { entitled: true, failNext: 0, emails: [] },
     release: { tag_name: 'v1.0.0', html_url: 'https://github.com/example/openinbox/releases/tag/v1.0.0', body: 'First release.' },
     requests: [],
     seq: 1,
@@ -171,6 +173,23 @@ function cloudflare(state: FakeState, req: Request, url: URL, path: string, body
   if ((r = /^\/accounts\/[^/]+\/workers\/domains\/([^/]+)$/.exec(path)) && m === 'DELETE') {
     state.customDomains = state.customDomains.filter((d) => d.id !== r![1]);
     return new Response('', { status: 200 });
+  }
+  if (/^\/accounts\/[^/]+\/email\/sending\/suppressions$/.test(path)) {
+    if (!state.cfSending.entitled) return fail(403, 10105, 'email.sending.error.authentication.not_entitled');
+    return ok([]);
+  }
+  if ((r = /^\/accounts\/[^/]+\/email\/sending\/send$/.exec(path)) && m === 'POST') {
+    if (!state.cfSending.entitled) return fail(403, 10105, 'email.sending.error.authentication.not_entitled');
+    // Cloudflare checks the request shape before sending anything, which is what validate() relies on.
+    if (!body?.to || !body?.from || !body?.subject) return fail(400, 10001, 'email.sending.error.invalid_request_schema');
+    if (state.cfSending.failNext > 0) {
+      state.cfSending.failNext--;
+      return fail(500, 10002, 'email.sending.error.internal_server');
+    }
+    const address = (a: unknown) => (typeof a === 'string' ? a : String((a as { address?: string })?.address ?? ''));
+    const recipients = [body.to, body.cc, body.bcc].flat().filter(Boolean).map(address);
+    state.cfSending.emails.push(body);
+    return ok({ delivered: recipients, permanent_bounces: [], queued: [], message_id: `<${id(state, 'cfmail')}@cf.test>` });
   }
   if (/^\/accounts\/[^/]+\/email\/routing\/addresses$/.test(path)) {
     if (m === 'POST') {

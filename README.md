@@ -72,7 +72,7 @@ OpenInbox is built for everyday conversations. It is not a bulk or marketing sen
 
 **Mail**
 - Receive on any domain in your Cloudflare account. Email Routing is set up for you.
-- Send through Resend, Brevo, Mailjet or any SMTP server. When one provider hits its free limit, mail falls back to another.
+- Send through Resend, Brevo, Mailjet, Cloudflare Email Sending or any SMTP server. When one provider hits its free limit, mail falls back to another.
 - Threads, All Mail, search (`from:` `has:attachment` `before:`), labels, filters, snooze, scheduled and undo send.
 - Command palette and keyboard shortcuts, dark mode, mobile layout.
 
@@ -128,7 +128,7 @@ Everything runs inside your own Cloudflare account. There is no OpenInbox server
 | **Cloudflare Email Routing** | Receives mail for your domains and hands it to the Worker |
 | **One Worker** | Runs the web app, the API, inbound mail handling and scheduled jobs |
 | **One D1 database** | Stores mailboxes, messages, users and settings |
-| **A sending provider** | Delivers outgoing mail (Resend, Brevo, Mailjet or SMTP), with fallback between them |
+| **A sending provider** | Delivers outgoing mail (Resend, Brevo, Mailjet, Cloudflare or SMTP), with fallback between them |
 | **R2 (optional)** | Keeps large attachments |
 
 ## Deploy
@@ -137,7 +137,7 @@ Everything runs inside your own Cloudflare account. There is no OpenInbox server
 
 - A free Cloudflare account, with a domain on Cloudflare's nameservers.
 - A GitHub account.
-- A free account with a sending provider. This is only needed to send; receiving works without one.
+- A free account with a sending provider. This is only needed to send; receiving works without one. To send through Cloudflare itself instead, the account needs the Workers Paid plan.
 
 ### Steps
 
@@ -175,7 +175,7 @@ Everything runs inside your own Cloudflare account. There is no OpenInbox server
 </table>
 
 <details>
-<summary>The token's permissions (filled in for you by <a href="https://dash.cloudflare.com/?to=/:account/api-tokens&amp;permissionGroupKeys=%5B%7B%22key%22%3A%22c8fed203ed3043cba015a93ad1616f1f%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%224755a26eedb94da69e1066d98aa820be%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%223030687196b94b638145a3953da2b699%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%2279b3ec0d10ce4148a8f8bdc0cc5f97f2%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%2228f4b596e7d643029c524985477ae49a%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%229c88f9c5bce24ce7af9a958ba9c504db%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22e086da7e2179491d91ee5f35b3ca210a%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22e4589eb09e63436686cd64252a3aebeb%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22b89a480218d04ceb98b4fe57ca29dc1f%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22c1fde68c7bcc44588cbb6ddbc16d6480%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22bf7481a1826f439697cb59a20b22293e%22%2C%22type%22%3A%22edit%22%7D%5D&amp;name=OpenInbox">this link</a>)</summary>
+<summary>The token's permissions (filled in for you by <a href="https://dash.cloudflare.com/?to=/:account/api-tokens&amp;permissionGroupKeys=%5B%7B%22key%22%3A%22c8fed203ed3043cba015a93ad1616f1f%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%224755a26eedb94da69e1066d98aa820be%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%223030687196b94b638145a3953da2b699%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%2279b3ec0d10ce4148a8f8bdc0cc5f97f2%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%2228f4b596e7d643029c524985477ae49a%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%229c88f9c5bce24ce7af9a958ba9c504db%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22e086da7e2179491d91ee5f35b3ca210a%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22e4589eb09e63436686cd64252a3aebeb%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%225df633d6b41c42bcaf5b4a62b9d14b64%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22b89a480218d04ceb98b4fe57ca29dc1f%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22c1fde68c7bcc44588cbb6ddbc16d6480%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22bf7481a1826f439697cb59a20b22293e%22%2C%22type%22%3A%22edit%22%7D%5D&amp;name=OpenInbox">this link</a>)</summary>
 
 | Scope | Permission | Access | |
 | --- | --- | --- | --- |
@@ -188,6 +188,7 @@ Everything runs inside your own Cloudflare account. There is no OpenInbox server
 | Zone | Workers Routes | Edit | optional: app on `mail.yourdomain` |
 | Zone | Analytics | Read | optional: delivery log |
 | Account | Email Routing Addresses | Edit | optional: forwarding |
+| Account | Email Sending | Edit | optional: send through Cloudflare |
 | Account | Account Analytics | Read | optional: usage on the dashboard |
 | Account | Workers R2 Storage | Edit | optional: attachments bucket |
 
@@ -200,7 +201,7 @@ Everything runs inside your own Cloudflare account. There is no OpenInbox server
 | Worker requests | 100,000 / day per account |
 | D1 storage | 500 MB, roughly 50,000–100,000 messages |
 | Incoming message size | 25 MB |
-| Sending | Resend 100/day, Brevo 300/day, Mailjet 200/day |
+| Sending | Resend 100/day, Brevo 300/day, Mailjet 200/day; Cloudflare 3,000/month on Workers Paid |
 
 Mail is stored text-only by default, and attachments are kept only on messages under 950 KB. To keep every attachment, turn on R2 storage in **Admin → Integrations → Attachments**. R2 has a 10 GB free tier, but Cloudflare requires a payment method on the account first.
 
