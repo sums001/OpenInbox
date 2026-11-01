@@ -1,7 +1,8 @@
-# Keeps a copy created by the Deploy to Cloudflare button up to date with the original project.
-# Run it from the Actions tab (or let the weekly schedule run it). It copies the upstream files
-# into this repository, keeping your wrangler.jsonc names and database_id, and pushes a commit;
-# Cloudflare then redeploys and the deploy script applies any new database migrations.
+# Updates a copy created by the Deploy to Cloudflare button to a newer version of the original
+# project. It only runs when you start it from the Actions tab: updates are never automatic, so a
+# bad upstream release can't reach your inbox without you choosing to install it. It copies the
+# upstream files into this repository, keeping your wrangler.jsonc names and database_id, and
+# pushes a commit; Cloudflare then redeploys and the Worker applies any new database migrations.
 name: Sync upstream
 
 on:
@@ -10,8 +11,6 @@ on:
       ref:
         description: 'Upstream branch or tag to update to (default: latest release, else main)'
         required: false
-  schedule:
-    - cron: '0 6 * * 1'
 
 permissions:
   contents: write

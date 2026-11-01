@@ -218,7 +218,9 @@ You are responsible for the mail you send. The OpenInbox maintainers accept no l
 
 ## Updating
 
-In your copy of the repo on GitHub, run **Actions → Sync upstream → Run workflow**. It also runs weekly by itself. Cloudflare redeploys automatically, and the Worker applies any database migrations itself.
+Updates are manual: your instance only changes when you choose to update it. When the admin overview shows a new version, read its release notes, then in your copy of the repo on GitHub run **Actions → Sync upstream → Run workflow**. Cloudflare redeploys automatically, and the Worker applies any database migrations itself.
+
+If your copy was created before automatic updates were removed, its workflow still has a weekly schedule. Once it has synced to a version with this change, those scheduled runs do nothing; you can also delete the `schedule:` lines from `.github/workflows/sync-upstream.yml`.
 
 > [!NOTE]
 > Don't click the Deploy button again to update. It creates a second, separate instance.

@@ -9,6 +9,14 @@ import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+// Updates are manual only. Copies made before that still have a weekly schedule in their workflow
+// file, which this script can't change, so scheduled runs stop here instead.
+if (process.env.GITHUB_EVENT_NAME === 'schedule') {
+  console.log('Automatic updates are disabled. To update, run Actions → Sync upstream → Run workflow.');
+  console.log('You can also delete the "schedule:" lines from .github/workflows/sync-upstream.yml.');
+  process.exit(0);
+}
+
 const upstream = process.env.UPSTREAM || 'sums001/OpenInbox';
 const requested = process.argv[2]?.trim();
 const sh = (cmd, opts = {}) => execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], ...opts }).trim();
