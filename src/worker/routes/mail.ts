@@ -27,6 +27,7 @@ import { storeFor } from '../storage';
 import { buildMime } from '../mail/mime';
 import { ingest } from '../services/inbound';
 import { sendSystemReply } from '../services/send';
+import { trackingEvents } from '../services/tracking';
 import { isValidAddress, normalizeAddress, singleLine } from '../mail/address';
 
 export const mail = new Hono<AppBindings>();
@@ -156,6 +157,12 @@ mail.delete('/notes/:id', async (c) => {
 mail.get('/messages/:id/body', async (c) => {
   const m = await assertMessage(c.env.DB, currentUser(c), intParam(c, 'id'));
   return c.json(await messageBody(c.env.DB, m.messageId));
+});
+
+// Opens and clicks of a sent message.
+mail.get('/messages/:id/tracking', async (c) => {
+  const m = await assertMessage(c.env.DB, currentUser(c), intParam(c, 'id'));
+  return c.json(await trackingEvents(c.env.DB, m.messageId));
 });
 
 // The original .eml when it was kept; otherwise rebuilt from the stored parts.

@@ -497,6 +497,7 @@ admin.get('/settings', async (c) => {
     spamRetentionDays: s.spamRetentionDays,
     spamPolicy: s.spamPolicy,
     remoteImages: s.remoteImages,
+    tracking: s.tracking,
     appUrl: s.appUrl,
     version: __APP_VERSION__,
     keyRotation: !!c.env.ENCRYPTION_KEY_PREVIOUS,
@@ -505,7 +506,8 @@ admin.get('/settings', async (c) => {
 
 admin.patch('/settings', async (c) => {
   const input = await body(c, settingsSchema);
-  await saveSettings(c.env.DB, { ...input, appUrl: input.appUrl?.replace(/\/$/, '') });
+  // Only the fields sent: saving appUrl as undefined would delete it.
+  await saveSettings(c.env.DB, { ...input, ...(input.appUrl !== undefined ? { appUrl: input.appUrl.replace(/\/$/, '') } : {}) });
   await audit(c.env.DB, { userId: currentUser(c).id, action: 'settings.updated', details: input, ip: clientIp(c) });
   return c.json({ ok: true });
 });

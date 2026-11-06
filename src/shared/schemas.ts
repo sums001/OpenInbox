@@ -1,6 +1,6 @@
 // Request validation shared by the Worker (enforced) and the web app (form hints).
 import { z } from 'zod';
-import { LABEL_COLORS, PROVIDER_TYPES } from './constants';
+import { API_SCOPES, LABEL_COLORS, PROVIDER_TYPES } from './constants';
 
 export const address = z.object({ name: z.string().max(200).default(''), address: z.string().trim().min(3).max(254) });
 const id = z.coerce.number().int().positive();
@@ -122,6 +122,7 @@ export const settingsSchema = z.object({
   spamRetentionDays: z.number().int().min(1).max(3650).optional(),
   spamPolicy: z.enum(['spam', 'reject', 'off']).optional(),
   remoteImages: z.enum(['block', 'allow']).optional(),
+  tracking: z.enum(['off', 'on']).optional(),
   appUrl: z.string().trim().url().max(200).optional(),
 });
 
@@ -177,3 +178,37 @@ export const noteSchema = z.object({ body: z.string().trim().min(1).max(5000) })
 export const blockSchema = z.object({ pattern: z.string().trim().min(3).max(254), mailboxId: id.nullable().optional() });
 export const destinationSchema = z.object({ email: z.string().trim().email().max(254) });
 export const trustedSenderSchema = z.object({ pattern: z.string().trim().min(3).max(254) });
+
+export const apiKeySchema = z.object({
+  // A key outlives sessions, so creating one asks for the password again.
+  password: z.string().min(1, 'Enter your password.').max(256),
+  name: z.string().trim().min(1, 'Name the key, e.g. the app that uses it.').max(60),
+  scopes: z.array(z.enum(API_SCOPES)).min(1, 'Choose at least one permission.').max(API_SCOPES.length),
+  mailboxIds: z.array(id).max(100).nullable().default(null),
+  expiresInDays: z.number().int().min(1).max(3650).nullable().default(null),
+});
+
+// Recipients as "ann@example.com" or { name, address }.
+const recipient = z.union([z.string().trim().min(3).max(254).transform((a) => ({ name: '', address: a })), address]);
+
+export const apiSendSchema = z
+  .object({
+    from: z.string().trim().min(3).max(254),
+    to: z.array(recipient).min(1, 'Add at least one recipient.').max(100),
+    cc: z.array(recipient).max(100).default([]),
+    bcc: z.array(recipient).max(100).default([]),
+    subject: z.string().max(998).default(''),
+    text: z.string().max(1_500_000).optional(),
+    html: z.string().max(1_500_000).optional(),
+    inReplyTo: id.optional(),
+    sendAt: z.union([z.number().int().positive(), z.iso.datetime({ offset: true })]).optional(),
+    attachments: z
+      .array(z.object({ filename: z.string().trim().min(1).max(200), contentType: z.string().trim().max(100).default('application/octet-stream'), content: z.string().max(28_000_000) }))
+      .max(10)
+      .default([]),
+  })
+  .refine((m) => !!(m.text?.trim() || m.html?.trim()), { message: 'Give the message a text or html body.', path: ['text'] });
+
+export const apiThreadActionSchema = threadActionSchema.extend({
+  action: z.enum(['read', 'unread', 'star', 'unstar', 'archive', 'inbox', 'spam', 'notspam', 'trash', 'snooze', 'unsnooze', 'label', 'unlabel']),
+}).omit({ userId: true });

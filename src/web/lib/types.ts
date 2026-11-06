@@ -99,6 +99,30 @@ export interface Message {
   sendAt: number | null;
   messageId: string | null;
   attachments: Attachment[];
+  tracking: TrackingSummary | null;
+}
+
+// Opens and clicks of a sent message. "opened" and "clicked" count people (directly or through a
+// mail provider's image proxy); machine counts are Apple Mail prefetches and scanners.
+export interface TrackingSummary {
+  opened: number;
+  firstOpenedAt: number | null;
+  lastOpenedAt: number | null;
+  machineOpens: number;
+  clicked: number;
+  firstClickedAt: number | null;
+  machineClicks: number;
+  links: { url: string; clicks: number }[];
+}
+
+export interface TrackingEvent {
+  kind: 'open' | 'click';
+  source: 'human' | 'proxy' | 'apple' | 'scanner';
+  url: string | null;
+  ip: string | null;
+  userAgent: string | null;
+  country: string | null;
+  at: number;
 }
 
 export interface ThreadDetail {

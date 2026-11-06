@@ -3,6 +3,7 @@ import { scan } from '../../src/worker/mail/scan';
 import { decodeParam, decodeWords, parseStructured } from '../../src/worker/mail/headers';
 import { parseAddressList, stripPlusTag } from '../../src/worker/mail/address';
 import { htmlToText, makeSnippet } from '../../src/worker/mail/html';
+import { applyTracking, classifyHit } from '../../src/worker/mail/tracking';
 import { buildMime, encodeQuotedPrintable } from '../../src/worker/mail/mime';
 import { buildReferences, normalizeSubject, parseIdList } from '../../src/worker/mail/threading';
 import { authSpamReason, parseAuthResults } from '../../src/worker/mail/auth-results';
@@ -126,6 +127,59 @@ describe('html and snippets', () => {
 
   it('makes snippets without quoted text', () => {
     expect(makeSnippet('Thanks!\n\nOn Mon, Ann wrote:\n> old text')).toBe('Thanks!');
+  });
+});
+
+describe('tracking', () => {
+  it('adds a pixel and redirects web links only', async () => {
+    const { html, links } = await applyTracking(
+      '<html><body><p><a href="https://a.example/x?a=1&amp;b=2">A</a> <a href="mailto:x@y.test">mail</a> <a href="https://a.example/x?a=1&amp;b=2">again</a> <a href="http://b.example">B</a></p></body></html>',
+      { base: 'https://mail.example.com', token: 'tok' },
+    );
+    expect(links).toEqual(['https://a.example/x?a=1&b=2', 'http://b.example/']);
+    expect(html).toContain('href="https://mail.example.com/api/t/tok/0">A</a>');
+    expect(html).toContain('href="mailto:x@y.test"');
+    expect(html).toContain('href="https://mail.example.com/api/t/tok/0">again</a>');
+    expect(html).toContain('href="https://mail.example.com/api/t/tok/1"');
+    expect(html).toMatch(/<img src="https:\/\/mail\.example\.com\/api\/t\/tok\.gif"[^>]*><\/body>/);
+  });
+
+  it('stores links as browsers follow them and skips invalid ones', async () => {
+    const { html, links } = await applyTracking('<a href="https://bücher.example/straße?q=ü ">A</a><a href="https://exa mple.com/">B</a><a href="https://x.test/&#13;&#10;Set-Cookie:a=b">C</a>', {
+      base: 'https://m.test',
+      token: 't',
+    });
+    expect(links).toEqual(['https://xn--bcher-kva.example/stra%C3%9Fe?q=%C3%BC', 'https://x.test/Set-Cookie:a=b']);
+    expect(html).toContain('href="https://exa mple.com/"');
+  });
+
+  it("leaves links in quoted and forwarded mail alone", async () => {
+    const { html, links } = await applyTracking(
+      '<p><a href="https://mine.test/">mine</a></p><p>On Mon, Ann wrote:</p><blockquote><p><a href="https://phish.test/">theirs</a></p><blockquote><a href="https://deep.test/">x</a></blockquote><a href="https://phish2.test/">y</a></blockquote><p><a href="https://mine2.test/">after</a></p><p>---------- Forwarded message ----------<br>From: Bob</p><a href="https://fwd.test/">fwd</a>',
+      { base: 'https://m.test', token: 't' },
+    );
+    expect(links).toEqual(['https://mine.test/', 'https://mine2.test/']);
+    for (const kept of ['https://phish.test/', 'https://deep.test/', 'https://phish2.test/', 'https://fwd.test/']) expect(html).toContain(`href="${kept}"`);
+  });
+
+  it('appends the pixel to a fragment without a body', async () => {
+    const { html } = await applyTracking('<p>Hi</p>', { base: 'https://m.test', token: 't' });
+    expect(html).toMatch(/^<p>Hi<\/p><img src="https:\/\/m\.test\/api\/t\/t\.gif"/);
+  });
+
+  it('tells people from machines', () => {
+    const base = { kind: 'open' as const, method: 'GET', org: 'Comcast Cable', msSinceSent: 3_600_000 };
+    const chrome = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36';
+    expect(classifyHit({ ...base, userAgent: chrome })).toBe('human');
+    expect(classifyHit({ ...base, userAgent: 'Mozilla/5.0 (Windows NT 5.1; rv:11.0) Gecko Firefox/11.0 (via ggpht.com GoogleImageProxy)', org: 'Google LLC' })).toBe('proxy');
+    expect(classifyHit({ ...base, userAgent: 'Mozilla/5.0', org: 'Apple Inc.' })).toBe('apple');
+    expect(classifyHit({ ...base, userAgent: chrome, org: 'Microsoft Corporation' })).toBe('proxy');
+    expect(classifyHit({ ...base, kind: 'click', userAgent: chrome, org: 'Microsoft Corporation' })).toBe('scanner');
+    expect(classifyHit({ ...base, kind: 'click', userAgent: chrome, org: 'Mimecast Ltd' })).toBe('scanner');
+    expect(classifyHit({ ...base, kind: 'click', userAgent: 'python-requests/2.32' })).toBe('scanner');
+    expect(classifyHit({ ...base, kind: 'click', userAgent: chrome, method: 'HEAD' })).toBe('scanner');
+    expect(classifyHit({ ...base, kind: 'click', userAgent: chrome, msSinceSent: 2_000 })).toBe('scanner');
+    expect(classifyHit({ ...base, kind: 'click', userAgent: chrome })).toBe('human');
   });
 });
 
