@@ -182,4 +182,13 @@ describe('first-run setup', () => {
     expect(await c.status('POST', '/api/auth/recover', { email: 'admin@example.com', setupKey: 'nope', newPassword: 'another long password' })).toBe(403);
     await c.post('/api/auth/recover', { email: 'admin@example.com', setupKey: ENCRYPTION_KEY, newPassword: 'another long password' });
   });
+
+  it('keeps the app address when other settings are saved', async () => {
+    const c = new Client();
+    await setupInstance(c);
+    const before = (await c.get('/api/admin/settings')).appUrl;
+    expect(before).toBeTruthy();
+    await c.patch('/api/admin/settings', { instanceName: 'Acme Mail' });
+    expect(await c.get('/api/admin/settings')).toMatchObject({ instanceName: 'Acme Mail', appUrl: before });
+  });
 });
