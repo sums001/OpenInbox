@@ -5,6 +5,7 @@ import { zipSync } from 'fflate';
 import { CalendarClock, Download, FileUp, Funnel, PenLine, Plus, Tag, Trash, Forward } from 'lucide-react';
 import { del, get, patch, post, put, api, errorText } from '../../lib/api';
 import { useAction, useInvalidate } from '../../lib/hooks';
+import { cleanSignature } from '../../lib/sanitize';
 import { cn, downloadBlob } from '../../lib/utils';
 import { LABEL_COLORS } from '../../../shared/constants';
 import type { Label, Mailbox } from '../../lib/types';
@@ -106,11 +107,11 @@ function Signature({ box }: { box: Mailbox }) {
         {s.signature && (
           <div>
             <div className="mb-1.5 text-[12.5px] font-medium">Preview</div>
-            <div className="rounded-lg border border-border bg-surface-2 p-3 text-[13px]" dangerouslySetInnerHTML={{ __html: sanitizeSignature(s.signature) }} />
+            <div className="rounded-lg border border-border bg-surface-2 p-3 text-[13px]" dangerouslySetInnerHTML={{ __html: cleanSignature(s.signature) }} />
           </div>
         )}
         <div className="flex justify-end">
-          <Button variant="primary" disabled={!box.canSend} loading={busy === 'sig'} onClick={() => save('sig', { displayName: s.displayName, signature: sanitizeSignature(s.signature) }, 'Saved')}>
+          <Button variant="primary" disabled={!box.canSend} loading={busy === 'sig'} onClick={() => save('sig', { displayName: s.displayName, signature: cleanSignature(s.signature) }, 'Saved')}>
             Save
           </Button>
         </div>
@@ -189,16 +190,6 @@ function Forwarding({ box }: { box: Mailbox }) {
       </div>
     </Card>
   );
-}
-
-// Keeps signatures to harmless formatting.
-function sanitizeSignature(html: string): string {
-  const looksHtml = /<\/?[a-z][\s\S]*>/i.test(html);
-  const text = looksHtml ? html : html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>');
-  return text
-    .replace(/<(script|style|iframe|object|embed|form)[\s\S]*?<\/\1>/gi, '')
-    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    .replace(/(href|src)\s*=\s*(["'])\s*javascript:[^"']*\2/gi, '');
 }
 
 function Labels({ box }: { box: Mailbox }) {

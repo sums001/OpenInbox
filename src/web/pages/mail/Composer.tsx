@@ -31,6 +31,7 @@ import {
 import { api, del, errorText, post, put } from '../../lib/api';
 import { bytes } from '../../lib/format';
 import { useSession } from '../../lib/session';
+import { cleanSignature } from '../../lib/sanitize';
 import { cn } from '../../lib/utils';
 import type { Address, Mailbox } from '../../lib/types';
 import { Button, IconButton } from '../../components/ui/button';
@@ -76,7 +77,7 @@ const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigat
 export function withSignature(html: string, signature: string): string {
   const stripped = html.replace(new RegExp(`<div ${SIGNATURE_MARK}[^>]*>[\\s\\S]*?</div>(?![\\s\\S]*<div ${SIGNATURE_MARK})`), '');
   if (!signature.trim()) return stripped;
-  const block = `<div ${SIGNATURE_MARK}="1"><p>-- </p>${signature}</div>`;
+  const block = `<div ${SIGNATURE_MARK}="1"><p>-- </p>${cleanSignature(signature)}</div>`;
   // Above quoted history, like most clients.
   const quote = stripped.search(/<p>On .{4,200} wrote:<\/p><blockquote>|<p>---------- Forwarded message/);
   return quote >= 0 ? `${stripped.slice(0, quote)}${block}${stripped.slice(quote)}` : `${stripped}${block}`;

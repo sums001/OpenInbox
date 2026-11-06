@@ -3,6 +3,7 @@ import { all, first, placeholders, run } from '../db/db';
 import { newId } from '../lib/ids';
 import { badRequest, conflict, notFound } from '../lib/errors';
 import { isValidAddress, normalizeAddress, VALID_LOCAL_PART } from '../mail/address';
+import { sanitizeSignature } from '../mail/signature';
 import { parseJson } from '../lib/json';
 
 export interface MailboxRow {
@@ -187,7 +188,7 @@ export async function updateMailbox(
     'UPDATE mailboxes SET display_name = ?, kind = ?, signature = ?, auto_reply = ?, forward_to = ? WHERE id = ?',
     patch.displayName?.trim() ?? m.display_name,
     patch.kind ?? m.kind,
-    patch.signature ?? m.signature,
+    patch.signature === undefined ? m.signature : await sanitizeSignature(patch.signature),
     patch.autoReply === undefined ? m.auto_reply : patch.autoReply ? JSON.stringify(patch.autoReply) : null,
     patch.forwardTo === undefined ? m.forward_to : JSON.stringify(patch.forwardTo),
     id,

@@ -3,6 +3,7 @@ import { scan } from '../../src/worker/mail/scan';
 import { decodeParam, decodeWords, parseStructured } from '../../src/worker/mail/headers';
 import { parseAddressList, stripPlusTag } from '../../src/worker/mail/address';
 import { htmlToText, makeSnippet } from '../../src/worker/mail/html';
+import { sanitizeSignature } from '../../src/worker/mail/signature';
 import { buildMime, encodeQuotedPrintable } from '../../src/worker/mail/mime';
 import { buildReferences, normalizeSubject, parseIdList } from '../../src/worker/mail/threading';
 import { authSpamReason, parseAuthResults } from '../../src/worker/mail/auth-results';
@@ -126,6 +127,25 @@ describe('html and snippets', () => {
 
   it('makes snippets without quoted text', () => {
     expect(makeSnippet('Thanks!\n\nOn Mon, Ann wrote:\n> old text')).toBe('Thanks!');
+  });
+});
+
+describe('signature sanitizer', () => {
+  it('keeps simple formatting and safe links', async () => {
+    expect(await sanitizeSignature('<p><b>Ann</b> <a href="https://example.com" style="color: red; position: fixed">site</a></p>')).toBe(
+      '<p><b>Ann</b> <a href="https://example.com" style="color: red" target="_blank" rel="noopener noreferrer">site</a></p>',
+    );
+  });
+
+  it('removes the bypasses from issue #4', async () => {
+    const out = await sanitizeSignature(
+      '<svg/onload=alert(1)>x</svg><img src=x/onerror=alert(1)><a href=javascript:alert(1)>a</a><link rel=stylesheet href=//e.test><meta http-equiv=refresh content=0><base href=//e.test>ok<style>body{display:none}',
+    );
+    expect(out).toBe('<img><a target="_blank" rel="noopener noreferrer">a</a>ok');
+  });
+
+  it('drops url() and positioning from styles', async () => {
+    expect(await sanitizeSignature('<span style="background:url(//e.test/t.gif);z-index:9;font-size:12px">x</span>')).toBe('<span style="font-size:12px">x</span>');
   });
 });
 
