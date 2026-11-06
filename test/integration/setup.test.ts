@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useFakeApis } from '../helpers/fake';
 import { Client, ENCRYPTION_KEY, setupInstance } from '../helpers/client';
+import { totpCode } from '../../src/worker/lib/totp';
 
 describe('first-run setup', () => {
   let fake: ReturnType<typeof useFakeApis>;
@@ -181,5 +182,26 @@ describe('first-run setup', () => {
 
     expect(await c.status('POST', '/api/auth/recover', { email: 'admin@example.com', setupKey: 'nope', newPassword: 'another long password' })).toBe(403);
     await c.post('/api/auth/recover', { email: 'admin@example.com', setupKey: ENCRYPTION_KEY, newPassword: 'another long password' });
+  });
+  it('accepts each two-factor code once', async () => {
+    const c = new Client();
+    await setupInstance(c);
+    const { secret } = await c.post('/api/account/2fa/setup');
+    const setupCode = await totpCode(secret);
+    await c.post('/api/account/2fa/enable', { code: setupCode });
+    const signIn = async () => {
+      await c.post('/api/auth/logout');
+      expect((await c.post('/api/auth/login', { email: 'admin@example.com', password: 'correct horse battery' })).mfaRequired).toBe(true);
+    };
+
+    await signIn();
+    // The code that turned 2FA on counts as used.
+    expect(await c.status('POST', '/api/auth/2fa', { code: setupCode })).toBe(401);
+    const next = await totpCode(secret, Date.now() + 30_000);
+    await c.post('/api/auth/2fa', { code: next });
+    expect((await c.get('/api/auth/session')).user.mfaPending).toBe(false);
+
+    await signIn();
+    expect(await c.status('POST', '/api/auth/2fa', { code: next })).toBe(401);
   });
 });

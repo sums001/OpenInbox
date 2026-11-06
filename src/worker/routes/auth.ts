@@ -10,7 +10,7 @@ import { accountKey, assertNotLimited, clearFailures, clientIpKey, KEY_CHECK_PER
 import { clientIp } from '../auth/middleware';
 import { DUMMY_HASH, verifyPassword } from '../lib/password';
 import { decrypt, safeEqual } from '../lib/crypto';
-import { hashRecoveryCode, verifyTotp } from '../lib/totp';
+import { hashRecoveryCode, matchTotpStep } from '../lib/totp';
 import { HttpError, unauthorized } from '../lib/errors';
 import { parseJson } from '../lib/json';
 import { changePassword, invalidLogin, ownerUser, touchLogin, type UserRow } from '../services/users';
@@ -66,7 +66,15 @@ auth.post('/2fa', async (c) => {
   await assertNotLimited(c.env.DB, accountKey('2fa', user.email), LOGIN_PER_ACCOUNT);
   const row = await first<UserRow>(c.env.DB, 'SELECT * FROM users WHERE id = ?', user.id);
   let ok = false;
-  if (row?.totp_secret) ok = await verifyTotp(await decrypt(c.env, row.totp_secret), code);
+  if (row?.totp_secret) {
+    const step = await matchTotpStep(await decrypt(c.env, row.totp_secret), code);
+    // Only a step later than the last accepted one; the conditional update also settles two
+    // requests racing with the same code.
+    if (step !== null) {
+      const res = await c.env.DB.prepare('UPDATE users SET totp_last_step = ? WHERE id = ? AND totp_last_step < ?').bind(step, user.id, step).run();
+      ok = res.meta.changes > 0;
+    }
+  }
   if (!ok && row?.recovery_codes) {
     // A recovery code works once.
     const hashes = parseJson<string[]>(row.recovery_codes, []);
