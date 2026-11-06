@@ -86,12 +86,15 @@ auth.post('/2fa', async (c) => {
     }
   }
   if (!ok && row?.recovery_codes) {
-    // A recovery code works once.
+    // A recovery code works once: the update only applies to the list as read, so of two
+    // requests racing with codes, one wins and the other is refused (and can be tried again).
     const hashes = parseJson<string[]>(row.recovery_codes, []);
     const h = await hashRecoveryCode(code);
     if (hashes.includes(h)) {
-      ok = true;
-      await c.env.DB.prepare('UPDATE users SET recovery_codes = ? WHERE id = ?').bind(JSON.stringify(hashes.filter((x) => x !== h)), user.id).run();
+      const used = await c.env.DB.prepare('UPDATE users SET recovery_codes = ? WHERE id = ? AND recovery_codes = ?')
+        .bind(JSON.stringify(hashes.filter((x) => x !== h)), user.id, row.recovery_codes)
+        .run();
+      ok = used.meta.changes > 0;
     }
   }
   if (!ok) {

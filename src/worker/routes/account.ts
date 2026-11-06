@@ -50,12 +50,13 @@ account.post('/2fa/enable', async (c) => {
   const { code } = await body(c, totpSchema);
   const row = await first<UserRow>(c.env.DB, 'SELECT * FROM users WHERE id = ?', user.id);
   if (!row?.totp_secret) throw badRequest('Start two-factor setup first.');
+  if (row.totp_enabled) throw badRequest('Two-factor authentication is already on.');
   const step = await matchTotpStep(await decrypt(c.env, row.totp_secret), code);
   if (step === null) throw new HttpError(400, 'invalid_code', 'That code is not valid.');
   const codes = newRecoveryCodes();
   const hashes = await Promise.all(codes.map(hashRecoveryCode));
   // The setup code counts as used, and a step left from an earlier secret no longer applies.
-  await run(c.env.DB, 'UPDATE users SET totp_enabled = 1, recovery_codes = ?, totp_last_step = ? WHERE id = ?', JSON.stringify(hashes), step, user.id);
+  await run(c.env.DB, 'UPDATE users SET totp_enabled = 1, recovery_codes = ?, totp_last_step = ? WHERE id = ? AND totp_enabled = 0', JSON.stringify(hashes), step, user.id);
   await audit(c.env.DB, { userId: user.id, action: 'account.2fa_enabled', ip: clientIp(c) });
   return c.json({ recoveryCodes: codes });
 });

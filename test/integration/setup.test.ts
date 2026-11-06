@@ -214,6 +214,8 @@ describe('first-run setup', () => {
     const { secret } = await c.post('/api/account/2fa/setup');
     const setupCode = await totpCode(secret);
     await c.post('/api/account/2fa/enable', { code: setupCode });
+    // Turning it on again can't reset the step or the recovery codes.
+    expect(await c.status('POST', '/api/account/2fa/enable', { code: await totpCode(secret, Date.now() + 30_000) })).toBe(400);
     const signIn = async () => {
       await c.post('/api/auth/logout');
       expect((await c.post('/api/auth/login', { email: 'admin@example.com', password: 'correct horse battery' })).mfaRequired).toBe(true);
@@ -228,5 +230,22 @@ describe('first-run setup', () => {
 
     await signIn();
     expect(await c.status('POST', '/api/auth/2fa', { code: next })).toBe(401);
+  });
+
+  it('accepts a recovery code once, also when two requests race', async () => {
+    const c = new Client();
+    await setupInstance(c);
+    const { secret } = await c.post('/api/account/2fa/setup');
+    const { recoveryCodes } = await c.post('/api/account/2fa/enable', { code: await totpCode(secret) });
+    const sessions = await Promise.all(
+      [0, 1].map(async () => {
+        const s = new Client();
+        await s.init();
+        await s.post('/api/auth/login', { email: 'admin@example.com', password: 'correct horse battery' });
+        return s;
+      }),
+    );
+    const codes = await Promise.all(sessions.map((s) => s.status('POST', '/api/auth/2fa', { code: recoveryCodes[0] })));
+    expect(codes.sort()).toEqual([200, 401]);
   });
 });
