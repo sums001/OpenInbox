@@ -497,6 +497,7 @@ admin.get('/settings', async (c) => {
     spamRetentionDays: s.spamRetentionDays,
     spamPolicy: s.spamPolicy,
     remoteImages: s.remoteImages,
+    tracking: s.tracking,
     appUrl: s.appUrl,
     version: __APP_VERSION__,
     keyRotation: !!c.env.ENCRYPTION_KEY_PREVIOUS,

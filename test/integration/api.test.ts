@@ -45,6 +45,8 @@ describe('Inbox API', () => {
     const out = fake.state.resend.emails[0] as { to: string[]; text: string; html?: string };
     expect(out.to).toEqual(['lead@dest.test']);
     expect(out.text).toBe('Plain text body');
+    // Tracking is off until an admin turns it on.
+    expect(out.html ?? '').not.toContain('/api/t/');
 
     await deliver(email({ subject: 'Re: Hello', messageId: 'r1@dest.test' }), { from: 'lead@dest.test', to: 'admin@example.com' });
     const inbound = await call(created.key, 'GET', '/api/v1/messages?direction=in');
@@ -174,5 +176,74 @@ describe('Inbox API', () => {
     });
     expect(r.status).toBe(409);
     expect(r.body.error.code).toBe('attachments_disabled');
+  });
+  it('tracks opens and clicks of sent mail when turned on, apart from machines', async () => {
+    await admin.patch('/api/admin/settings', { tracking: 'on' });
+    expect((await admin.get('/api/admin/settings')).tracking).toBe('on');
+    const { key } = await newKey(['read', 'send']);
+    const plain = await call(key, 'POST', '/api/v1/messages', { from: 'admin@example.com', to: ['lead@dest.test'], subject: 'Hi', text: 'Plain text' });
+    // A plain-text message gets an HTML part with the pixel.
+    expect((fake.state.resend.emails[0] as { html: string }).html).toContain(`${ORIGIN}/api/t/`);
+    expect(plain.body.status).toBe('sent');
+    const sent = await call(key, 'POST', '/api/v1/messages', {
+      from: 'admin@example.com',
+      to: ['lead@dest.test'],
+      subject: 'Proposal',
+      html: '<p>See <a href="https://site.test/p?a=1&amp;b=2">the proposal</a>.</p>',
+    });
+    const out = fake.state.resend.emails[1] as { html: string };
+    const token = /\/api\/t\/([A-Za-z0-9_-]+)\.gif/.exec(out.html)![1];
+    expect(out.html).toContain(`${ORIGIN}/api/t/${token}/0`);
+    expect(out.html).not.toContain('site.test');
+
+    const get = async (path: string, ua: string, method = 'GET') => {
+      const ctx = createExecutionContext();
+      const res = await worker.fetch(new Request(ORIGIN + path, { method, headers: { 'User-Agent': ua }, redirect: 'manual' }), env, ctx);
+      await waitOnExecutionContext(ctx);
+      return res;
+    };
+    const chrome = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36';
+    expect((await get(`/api/t/${token}.gif`, 'Mozilla/5.0')).headers.get('content-type')).toBe('image/gif');
+    // A link scanner right after sending, then the reader later.
+    expect((await get(`/api/t/${token}/0`, chrome, 'HEAD')).status).toBe(302);
+    await env.DB.prepare('UPDATE tracked_messages SET sent_at = sent_at - 3600000').run();
+    expect((await get(`/api/t/${token}.gif`, chrome)).status).toBe(200);
+    const click = await get(`/api/t/${token}/0`, chrome);
+    expect(click.status).toBe(302);
+    expect(click.headers.get('location')).toBe('https://site.test/p?a=1&b=2');
+    expect((await get(`/api/t/${token}/5`, chrome)).status).toBe(404);
+    expect((await get('/api/t/unknownunknownunknown.gif', chrome)).status).toBe(200);
+    // A capped message stops recording but still redirects.
+    await env.DB.prepare('UPDATE tracked_messages SET events = 300').run();
+    expect((await get(`/api/t/${token}/0`, chrome)).status).toBe(302);
+    expect((await env.DB.prepare('SELECT COUNT(*) AS n FROM tracking_events').first<{ n: number }>())!.n).toBe(4);
+    await env.DB.prepare('UPDATE tracked_messages SET events = 4').run();
+
+    const { summary, events } = (await call(key, 'GET', `/api/v1/messages/${sent.body.id}/events`)).body;
+    expect(summary).toMatchObject({ opened: 1, machineOpens: 1, clicked: 1, machineClicks: 1, links: [{ url: 'https://site.test/p?a=1&b=2', clicks: 1 }] });
+    expect(events.map((e: { source: string }) => e.source).sort()).toEqual(['apple', 'human', 'human', 'scanner']);
+    // The stored copy is what was written, and the thread shows the summary.
+    const thread = await admin.get(`/api/threads/${sent.body.threadId}`);
+    expect(thread.messages[0].html).toContain('https://site.test/p');
+    expect(thread.messages[0].tracking).toMatchObject({ opened: 1, clicked: 1 });
+
+    // Links in delivered mail keep working after the sender deletes the message.
+    await env.DB.prepare('DELETE FROM messages WHERE id = ?').bind(sent.body.id).run();
+    const late = await get(`/api/t/${token}/0`, chrome);
+    expect(late.status).toBe(302);
+    expect(late.headers.get('location')).toBe('https://site.test/p?a=1&b=2');
+    expect((await env.DB.prepare('SELECT message_id FROM tracked_messages WHERE token = ?').bind(token).first<{ message_id: number | null }>())!.message_id).toBeNull();
+  });
+
+  it("doesn't track system mail such as auto-replies", async () => {
+    await admin.patch('/api/admin/settings', { tracking: 'on' });
+    const boxes = await admin.get('/api/mailboxes');
+    await admin.patch(`/api/mailboxes/${boxes[0].id}/settings`, { autoReply: { enabled: true, subject: 'Away', body: 'Back on Monday, see https://site.test' } });
+    await deliver(email({ subject: 'Hello?', messageId: 'ar1@dest.test' }), { from: 'ann@dest.test', to: 'admin@example.com' });
+    const out = fake.state.resend.emails as { subject: string; html?: string | null; text: string }[];
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toContain('Back on Monday');
+    expect(out[0].html ?? '').not.toContain('/api/t/');
+    expect((await env.DB.prepare('SELECT COUNT(*) AS n FROM tracked_messages').first<{ n: number }>())!.n).toBe(0);
   });
 });

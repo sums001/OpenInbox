@@ -1,6 +1,6 @@
 // Instance settings in the key/value `settings` table, with a short per-isolate cache so hot paths
 // (every API request, every inbound message) don't re-read them.
-import { DEFAULT_SETTINGS, type RemoteImagesPolicy, type SpamPolicy } from '../../shared/constants';
+import { DEFAULT_SETTINGS, type RemoteImagesPolicy, type SpamPolicy, type TrackingPolicy } from '../../shared/constants';
 import { all, run } from './db';
 
 export interface AppSettings {
@@ -20,6 +20,7 @@ export interface AppSettings {
   spamRetentionDays: number;
   spamPolicy: SpamPolicy;
   remoteImages: RemoteImagesPolicy;
+  tracking: TrackingPolicy;
   keyCheck: string | null; // a known value encrypted at setup, to detect a changed ENCRYPTION_KEY
   keyGeneratedAt: number | null; // set when setup generated ENCRYPTION_KEY instead of the deployer
 }
@@ -41,6 +42,7 @@ const KEYS: Record<keyof AppSettings, string> = {
   spamRetentionDays: 'mail.spam_retention_days',
   spamPolicy: 'mail.spam_policy',
   remoteImages: 'mail.remote_images',
+  tracking: 'mail.tracking',
   keyCheck: 'crypto.key_check',
   keyGeneratedAt: 'crypto.key_generated_at',
 };
@@ -64,6 +66,7 @@ const DEFAULTS: AppSettings = {
   spamRetentionDays: DEFAULT_SETTINGS.spamRetentionDays,
   spamPolicy: DEFAULT_SETTINGS.spamPolicy,
   remoteImages: DEFAULT_SETTINGS.remoteImages,
+  tracking: DEFAULT_SETTINGS.tracking,
   keyCheck: null,
   keyGeneratedAt: null,
 };

@@ -27,6 +27,7 @@ import { counterStmt, dailyStatStmt } from './stats';
 import { bumpState } from './mailboxes';
 import { mergeParticipants } from './inbound';
 import type { SessionUser } from '../types';
+import { trackedHtml } from './tracking';
 import { nextSeqStmts } from '../db/sequence';
 
 export interface ComposeInput {
@@ -399,6 +400,11 @@ export async function deliver(env: Env, settings: AppSettings, id: number): Prom
     const body = await first<{ text: string; html: string | null; headers: string }>(db, 'SELECT text, html, headers FROM message_bodies WHERE message_id = ?', id);
     // Outbound messages keep extra headers (e.g. Auto-Submitted) in message_bodies.headers.
     const extraHeaders = Object.fromEntries(parseJson<[string, string][]>(body?.headers, []));
+    // With tracking on (Admin > Settings), mail a person sent goes out with the tracking pixel and
+    // redirected links; the stored body keeps the original. System mail (auto-replies, unsubscribe
+    // requests) has no sender and isn't tracked.
+    const tracked = settings.tracking === 'on' && before.sent_by !== null ? await trackedHtml(db, settings, id, { text: body?.text ?? '', html: body?.html ?? null }, now) : null;
+    const html = tracked ?? (body?.html || null);
     const attachments = await loadAttachments(env, settings, id);
     const refs = (before.refs ?? '').split(' ').filter(Boolean);
     const from = { name: before.from_name, address: before.from_addr };
@@ -410,7 +416,7 @@ export async function deliver(env: Env, settings: AppSettings, id: number): Prom
       cc,
       subject: before.subject,
       text: body?.text ?? '',
-      html: body?.html || null,
+      html,
       messageId,
       inReplyTo: before.in_reply_to,
       references,
@@ -425,7 +431,7 @@ export async function deliver(env: Env, settings: AppSettings, id: number): Prom
       bcc,
       subject: before.subject,
       text: body?.text ?? '',
-      html: body?.html || null,
+      html,
       messageId,
       inReplyTo: before.in_reply_to,
       references,

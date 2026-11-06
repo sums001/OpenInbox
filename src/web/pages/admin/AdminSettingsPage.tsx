@@ -16,6 +16,7 @@ interface InstanceSettings {
   spamRetentionDays: number;
   spamPolicy: 'spam' | 'reject' | 'off';
   remoteImages: 'block' | 'allow';
+  tracking: 'off' | 'on';
   appUrl: string | null;
   version: string;
   keyRotation: boolean;
@@ -96,6 +97,12 @@ function GeneralSettings() {
           <Select value={s.remoteImages} onChange={(e) => set('remoteImages', e.target.value as InstanceSettings['remoteImages'])}>
             <option value="block">Block until allowed</option>
             <option value="allow">Always load</option>
+          </Select>
+        </Field>
+        <Field label="Open and click tracking" hint="Adds a tracking image and redirects links in all mail your users send, to show opens and clicks under each sent message. It can make spam filters more suspicious, and some laws require the recipient's consent.">
+          <Select value={s.tracking} onChange={(e) => set('tracking', e.target.value as InstanceSettings['tracking'])}>
+            <option value="off">Off</option>
+            <option value="on">Track all sent mail</option>
           </Select>
         </Field>
       </div>

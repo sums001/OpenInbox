@@ -76,6 +76,7 @@ OpenInbox is built for everyday conversations. It is not a bulk or marketing sen
 - Threads, All Mail, search (`from:` `has:attachment` `before:`), labels, filters, snooze, scheduled and undo send.
 - Command palette and keyboard shortcuts, dark mode, mobile layout.
 - [Inbox API](API.md): per-user API keys to read, search, organize and send mail from scripts and apps.
+- Optional open and click tracking of all sent mail (one switch in Admin → Settings), with Apple Mail prefetches and link scanners counted apart from people.
 
 **Teams**
 - Unlimited users, with personal and shared inboxes.

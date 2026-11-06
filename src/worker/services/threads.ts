@@ -10,6 +10,8 @@ import type { Address } from '../mail/address';
 import { THREAD_FOLDERS, type Folder } from '../../shared/constants';
 import { ftsExpression, hasTextQuery, parseSearch } from '../../shared/search';
 import { bumpState } from './mailboxes';
+import { trackingSummaries } from './tracking';
+import type { TrackingSummary } from '../mail/tracking';
 
 export interface ThreadRow {
   id: number;
@@ -220,6 +222,7 @@ export interface MessageDetail {
   sendAt: number | null;
   messageId: string | null;
   attachments: { id: number; filename: string; contentType: string; size: number; inline: boolean; contentId: string | null; stored: boolean }[];
+  tracking: TrackingSummary | null; // opens and clicks of mail a person sent
 }
 
 interface MessageRow {
@@ -264,7 +267,7 @@ export async function getThread(db: D1Database, threadId: number, messageId?: nu
     ...(messageId ? [messageId] : []),
   );
   const ids = messages.map((m) => m.id);
-  const [bodies, attachments, labels, notes] = await Promise.all([
+  const [bodies, attachments, labels, notes, tracking] = await Promise.all([
     ids.length
       ? all<{ message_id: number; text: string; html: string | null; size: number }>(
           db,
@@ -286,6 +289,7 @@ export async function getThread(db: D1Database, threadId: number, messageId?: nu
       'SELECT n.id, n.user_id, u.name, n.body, n.created_at FROM thread_notes n LEFT JOIN users u ON u.id = n.user_id WHERE n.thread_id = ? ORDER BY n.created_at',
       threadId,
     ),
+    trackingSummaries(db, messages.filter((m) => m.direction === 'out').map((m) => m.id)),
   ]);
   // Keep the response bounded: newest bodies first, older large HTML bodies load on demand.
   let budget = BODY_BUDGET;
@@ -326,6 +330,7 @@ export async function getThread(db: D1Database, threadId: number, messageId?: nu
       attachments: attachments
         .filter((a) => a.message_id === m.id)
         .map((a) => ({ id: a.id, filename: a.filename, contentType: a.content_type, size: a.size, inline: !!a.inline, contentId: a.content_id, stored: !!a.stored })),
+      tracking: tracking.get(m.id) ?? null,
     };
   });
   return {

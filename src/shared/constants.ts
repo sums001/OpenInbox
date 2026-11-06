@@ -29,10 +29,13 @@ export const DEFAULT_SETTINGS = {
   spamRetentionDays: 30,
   spamPolicy: 'spam' as SpamPolicy,
   remoteImages: 'block' as RemoteImagesPolicy,
+  tracking: 'off' as TrackingPolicy,
 };
 
 export type SpamPolicy = 'spam' | 'reject' | 'off';
 export type RemoteImagesPolicy = 'block' | 'allow';
+// Open and click tracking of all mail people send, for the whole instance.
+export type TrackingPolicy = 'off' | 'on';
 
 export const PROVIDER_TYPES = ['resend', 'brevo', 'mailjet', 'cloudflare', 'smtp'] as const;
 export type ProviderType = (typeof PROVIDER_TYPES)[number];

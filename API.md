@@ -167,8 +167,14 @@ again later. A message moved to another folder after it was listed isn't listed 
 One message with its bodies and attachments: everything in the list item, plus `bcc` (sent mail
 only), `replyTo`, `text`, `html`, `auth` (SPF, DKIM and DMARC results of received mail),
 `spamReason`, `error`, `sendAt` and `attachments` (`id`, `filename`, `contentType`, `size`,
-`inline`, `contentId`, `stored`). `html` is the original HTML: sanitize it before showing it in
-a browser.
+`inline`, `contentId`, `stored`), and `tracking`: opens and clicks of mail sent while tracking
+was on (see [Tracking](#tracking)), else `null`. `html` is the original HTML: sanitize it before
+showing it in a browser.
+
+### `GET /messages/{id}/events` · `read`
+
+Opens and clicks of a message you sent: `{ "summary": {...}, "events": [...] }`, events newest
+first. See [Tracking](#tracking).
 
 ### `GET /attachments/{id}` · `read`
 
@@ -207,6 +213,52 @@ Searches like the web app: `?q=invoice from:ann has:attachment before:2026-01-01
 `trash`, `snooze` (with `until`, milliseconds), `unsnooze`, `label` and `unlabel` (with
 `labelId`). Threads outside the key's mailboxes are skipped; the response says how many were
 changed: `{ "ok": true, "count": 1 }`.
+
+## Tracking
+
+An admin can turn on tracking for the whole instance in **Admin → Settings → Open and click
+tracking**. It is off by default. While it is on, every message people send, from the web app or
+the API, is tracked: you see when it is opened and its links clicked, in the web app under the
+message and here. There is no per-message choice. The sent copy gets a 1×1 image
+and its `http(s)` links point to `https://<your OpenInbox address>/api/t/...`, which records the
+click and redirects. The copy shown in your Sent mail is the original; the downloadable .eml is the
+copy that was sent, so opening it in a mail app may count as an open. Links keep redirecting for a
+year after sending, also if you delete the message. A plain-text message gets
+an HTML part, since tracking needs one. System mail (auto-replies, unsubscribe requests) is not
+tracked, and neither are links in quoted or forwarded mail: those were written by someone else, and
+redirecting them through your address would let an outsider borrow it.
+
+Opens and clicks are noisy, so every hit gets a `source`:
+
+| Source | What it is | Counted as |
+| --- | --- | --- |
+| `human` | A mail app or browser, as far as can be told | A person |
+| `proxy` | A provider's image proxy fetching for a reader (Gmail, Outlook.com) | A person, but the device and repeat opens are hidden |
+| `apple` | Apple Mail Privacy Protection, which loads the images of every message it receives | A machine: the message arrived, nothing more |
+| `scanner` | Security scanners and bots that follow links before anyone reads them, `HEAD` requests, and clicks within 10 seconds of sending | A machine |
+
+The summary counts people and machines apart:
+
+```json
+{
+  "opened": 2, "firstOpenedAt": 1762413000000, "lastOpenedAt": 1762420000000, "machineOpens": 1,
+  "clicked": 1, "firstClickedAt": 1762413100000, "machineClicks": 3,
+  "links": [{ "url": "https://example.com/pricing", "clicks": 1 }]
+}
+```
+
+Each event has `kind` (`open` or `click`), `source`, `url` (for clicks), `ip`, `userAgent`,
+`country` and `at`. A message records at most 300 events (links keep redirecting after that), and
+events are deleted after 180 days.
+
+Keep in mind:
+
+- Tracking is a guess, not proof: images may be blocked (no open recorded), a forwarded
+  message reports its new reader's opens, and a message to several people counts all of them
+  together.
+- Tracking pixels and redirected links make spam filters more suspicious, especially for cold
+  mail from a new domain. Replies are the more reliable signal.
+- Some laws (for example GDPR and ePrivacy in the EU) require consent for tracking pixels.
 
 ## Example: answer new mail from a script
 

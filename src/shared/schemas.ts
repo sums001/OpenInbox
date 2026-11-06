@@ -122,6 +122,7 @@ export const settingsSchema = z.object({
   spamRetentionDays: z.number().int().min(1).max(3650).optional(),
   spamPolicy: z.enum(['spam', 'reject', 'off']).optional(),
   remoteImages: z.enum(['block', 'allow']).optional(),
+  tracking: z.enum(['off', 'on']).optional(),
   appUrl: z.string().trim().url().max(200).optional(),
 });
 
