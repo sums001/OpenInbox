@@ -93,6 +93,95 @@ JVBERi0xLjQK
     expect(s.text).toBe('Just text.\n');
     expect(s.attachments).toHaveLength(0);
   });
+  it('reads text parts with a Content-ID as the body', () => {
+    // Bulk senders give body parts an ID, and multipart/related names its HTML root with one.
+    const s = scan(
+      eml(`Subject: Welcome
+Content-Type: multipart/related; boundary="rel"; type="multipart/alternative"
+
+--rel
+Content-Type: multipart/alternative; boundary="alt"
+
+--alt
+Content-Type: text/plain; charset=utf-8
+Content-ID: <text@mj>
+Content-Transfer-Encoding: quoted-printable
+
+Welcome to the team
+--alt
+Content-Type: text/html; charset=utf-8
+Content-ID: <html@mj>
+Content-Disposition: inline
+
+<p>Welcome <img src="cid:logo@mj"></p>
+--alt--
+--rel
+Content-Type: image/png
+Content-ID: <logo@mj>
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgo=
+--rel--
+`),
+    );
+    expect(s.text).toBe('Welcome to the team');
+    expect(s.html).toBe('<p>Welcome <img src="cid:logo@mj"></p>');
+    expect(s.attachments.map((a) => [a.contentType, a.contentId])).toEqual([['image/png', 'logo@mj']]);
+  });
+
+  it('shows unnamed text parts filed as attachments as the body when there is no other', () => {
+    const s = scan(
+      eml(`Subject: Odd sender
+Content-Type: multipart/alternative; boundary="alt"
+
+--alt
+Content-Type: text/plain; charset=utf-8
+Content-Disposition: attachment
+
+Plain version
+--alt
+Content-Type: text/html; charset=iso-8859-1
+Content-Disposition: attachment
+Content-Transfer-Encoding: quoted-printable
+
+<p>Caf=E9</p>
+--alt--
+`),
+    );
+    expect(s.text).toBe('Plain version');
+    expect(s.html).toBe('<p>Café</p>');
+    expect(s.attachments).toHaveLength(0);
+  });
+
+  it('keeps named or extra text attachments as files', () => {
+    const s = scan(
+      eml(`Subject: Notes
+Content-Type: multipart/mixed; boundary="mix"
+
+--mix
+Content-Type: text/plain
+
+See attached.
+--mix
+Content-Type: text/plain; name="notes.txt"
+Content-Disposition: attachment; filename="notes.txt"
+
+my notes
+--mix
+Content-Type: text/html
+Content-Disposition: attachment
+
+<p>saved page</p>
+--mix--
+`),
+    );
+    expect(s.text).toBe('See attached.');
+    expect(s.html).toBeNull();
+    expect(s.attachments.map((a) => [a.filename, a.contentType])).toEqual([
+      ['notes.txt', 'text/plain'],
+      [null, 'text/html'],
+    ]);
+  });
 });
 
 describe('addresses', () => {
