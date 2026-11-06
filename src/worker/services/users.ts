@@ -207,6 +207,8 @@ export async function resetUserPassword(env: Env, actor: SessionUser, id: number
   await env.DB.batch([
     env.DB.prepare('UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?').bind(await hashPassword(password), id),
     env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id),
+    // A reset is how a lost or taken-over account is recovered: keys made before it go too.
+    env.DB.prepare('DELETE FROM api_keys WHERE user_id = ?').bind(id),
     auditStmt(env.DB, { userId: actor.id, action: 'user.password_reset', target: u.email, ip }),
   ]);
   return password;

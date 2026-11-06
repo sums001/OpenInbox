@@ -19,6 +19,8 @@ import { mail } from './routes/mail';
 import { compose } from './routes/compose';
 import { admin } from './routes/admin';
 import { webhooks } from './routes/webhooks';
+import { api } from './routes/api';
+import { apiKeyAuth } from './auth/api-key';
 
 export const app = new Hono<AppBindings>().basePath('/api');
 
@@ -73,7 +75,13 @@ app.use('*', async (c, next) => {
   await migrated(c.env);
   c.set('settings', await loadSettings(c.env.DB));
   const path = c.req.path;
+  c.set('apiKey', null);
   if (path.startsWith('/api/webhooks/')) return next();
+  // The Inbox API never reads the session cookie; apiKeyAuth sets the user from the key.
+  if (path.startsWith('/api/v1/')) {
+    if (!(await isSetupComplete(c.env.DB))) throw new HttpError(409, 'setup_required', 'Finish setup first.');
+    return next();
+  }
   const s = await loadSession(c);
   c.set('user', s?.user ?? null);
   c.set('session', s?.session ?? null);
@@ -86,6 +94,9 @@ app.use('*', async (c, next) => {
 app.route('/setup', setup);
 app.route('/auth', auth);
 app.route('/webhooks', webhooks);
+
+app.use('/v1/*', apiKeyAuth);
+app.route('/v1', api);
 
 // A forced password change still allows changing the password (and reading the session).
 app.use('/account/*', async (c, next) => {

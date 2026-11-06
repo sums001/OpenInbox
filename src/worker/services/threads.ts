@@ -251,15 +251,17 @@ interface MessageRow {
 
 const BODY_BUDGET = 2_500_000;
 
-export async function getThread(db: D1Database, threadId: number) {
+// With messageId, only that message of the thread (the 300-message limit doesn't apply).
+export async function getThread(db: D1Database, threadId: number, messageId?: number) {
   const t = await first<ThreadRow>(db, `SELECT ${COLUMNS} FROM threads WHERE id = ?`, threadId);
   if (!t) throw notFound('Conversation not found.');
   const messages = await all<MessageRow>(
     db,
     `SELECT id, direction, status, message_id, from_addr, from_name, to_addrs, cc_addrs, bcc_addrs, reply_to, delivered_to, subject, snippet, sent_at,
             is_read, truncated, raw_key, spf, dkim, dmarc, spam_reason, list_unsubscribe, error, send_at
-       FROM messages WHERE thread_id = ? ORDER BY CASE WHEN direction = 'in' THEN created_at ELSE sent_at END, id LIMIT 300`,
+       FROM messages WHERE thread_id = ?${messageId ? ' AND id = ?' : ''} ORDER BY CASE WHEN direction = 'in' THEN created_at ELSE sent_at END, id LIMIT 300`,
     threadId,
+    ...(messageId ? [messageId] : []),
   );
   const ids = messages.map((m) => m.id);
   const [bodies, attachments, labels, notes] = await Promise.all([
