@@ -185,14 +185,6 @@ export function cleanSignature(raw: string): string {
   return clean;
 }
 
-// Plain text to safe HTML with links, quoted lines dimmed.
-export function textToSafeHtml(text: string): string {
-  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return esc(text)
-    .replace(/\b(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>')
-    .replace(/(^|\s)([\w.+-]+@[\w-]+\.[\w.-]+)/g, '$1<a href="mailto:$2">$2</a>');
-}
-
 // Splits plain text into the new part and the quoted history (lines starting with ">", or an
 // "On ... wrote:" line), so the history can be collapsed.
 export function splitQuoted(text: string): { main: string; quoted: string } {

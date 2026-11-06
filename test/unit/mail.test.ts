@@ -4,6 +4,7 @@ import { decodeParam, decodeWords, parseStructured } from '../../src/worker/mail
 import { parseAddressList, stripPlusTag } from '../../src/worker/mail/address';
 import { htmlToText, makeSnippet } from '../../src/worker/mail/html';
 import { sanitizeSignature } from '../../src/worker/mail/signature';
+import { textToSafeHtml } from '../../src/web/lib/linkify';
 import { buildMime, encodeQuotedPrintable } from '../../src/worker/mail/mime';
 import { buildReferences, normalizeSubject, parseIdList } from '../../src/worker/mail/threading';
 import { authSpamReason, parseAuthResults } from '../../src/worker/mail/auth-results';
@@ -127,6 +128,20 @@ describe('html and snippets', () => {
 
   it('makes snippets without quoted text', () => {
     expect(makeSnippet('Thanks!\n\nOn Mon, Ann wrote:\n> old text')).toBe('Thanks!');
+  });
+});
+
+describe('plain-text linkifier', () => {
+  it('cannot break out of the href (issue #3)', () => {
+    expect(textToSafeHtml('https://evil.example/"style="position:fixed;inset:0"x')).toBe(
+      '<a href="https://evil.example/" target="_blank" rel="noopener noreferrer">https://evil.example/</a>&quot;style=&quot;position:fixed;inset:0&quot;x',
+    );
+  });
+
+  it('links URLs and addresses and escapes the rest', () => {
+    expect(textToSafeHtml(`See <https://a.example/x?q=1&b=2>, it's "fine". Mail ann@b.example`)).toBe(
+      'See &lt;<a href="https://a.example/x?q=1&amp;b=2" target="_blank" rel="noopener noreferrer">https://a.example/x?q=1&amp;b=2</a>&gt;, it&#39;s &quot;fine&quot;. Mail <a href="mailto:ann@b.example">ann@b.example</a>',
+    );
   });
 });
 
