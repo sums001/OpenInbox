@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { env } from 'cloudflare:test';
 import { useFakeApis } from '../helpers/fake';
 import { Client, ENCRYPTION_KEY, setupInstance } from '../helpers/client';
 import { totpCode } from '../../src/worker/lib/totp';
@@ -177,11 +178,35 @@ describe('first-run setup', () => {
     await c.post('/api/auth/logout');
     expect((await c.get('/api/auth/session')).user).toBeNull();
 
-    for (let i = 0; i < 6; i++) await c.status('POST', '/api/auth/login', { email: 'admin@example.com', password: 'wrong password!' });
-    expect(await c.status('POST', '/api/auth/login', { email: 'admin@example.com', password: 'correct horse battery' })).toBe(429);
+    // Wrong passwords from other addresses lock the account for new addresses, but not for one
+    // the owner has signed in from before.
+    const clearAttempts = () => env.DB.prepare('DELETE FROM auth_attempts').run();
+    const login = async (ip: string, password: string) => {
+      const res = await c.request('POST', '/api/auth/login', { email: 'admin@example.com', password }, { 'CF-Connecting-IP': ip });
+      await res.arrayBuffer();
+      return res.status;
+    };
+    expect(await login('198.51.100.7', 'correct horse battery')).toBe(200);
+    await c.post('/api/auth/logout');
+    for (let i = 0; i < 6; i++) expect(await login(`203.0.113.${i}`, 'wrong password!')).toBe(401);
+    expect(await login('203.0.113.99', 'correct horse battery')).toBe(429);
+    expect(await login('198.51.100.7', 'wrong password!')).toBe(401);
+    expect(await login('198.51.100.7', 'correct horse battery')).toBe(200);
+    // An IPv6 network counts as known as a whole: devices rotate the rest of the address.
+    await c.post('/api/auth/logout');
+    await clearAttempts();
+    expect(await login('2001:db8:1:2::7', 'correct horse battery')).toBe(200);
+    await c.post('/api/auth/logout');
+    for (let i = 0; i < 6; i++) await login(`203.0.113.${i}`, 'wrong password!');
+    expect(await login('2001:db8:1:3::1', 'correct horse battery')).toBe(429);
+    expect(await login('2001:db8:1:2:abcd:ef01:2345:6789', 'correct horse battery')).toBe(200);
+    await c.post('/api/auth/logout');
+    for (let i = 0; i < 6; i++) await login(`203.0.113.${i}`, 'wrong password!');
 
     expect(await c.status('POST', '/api/auth/recover', { email: 'admin@example.com', setupKey: 'nope', newPassword: 'another long password' })).toBe(403);
     await c.post('/api/auth/recover', { email: 'admin@example.com', setupKey: ENCRYPTION_KEY, newPassword: 'another long password' });
+    // Recovery lifts the account's lockout, also for a new address.
+    expect(await login('192.0.2.50', 'another long password')).toBe(200);
   });
   it('accepts each two-factor code once', async () => {
     const c = new Client();

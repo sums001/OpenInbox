@@ -38,6 +38,7 @@ export async function cleanup(env: Env): Promise<void> {
   await db.batch([
     db.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now),
     db.prepare('DELETE FROM auth_attempts WHERE window_start < ?').bind(now - DAY),
+    db.prepare('DELETE FROM known_logins WHERE last_at < ?').bind(now - 365 * DAY),
     db.prepare('DELETE FROM cache WHERE expires_at < ?').bind(now),
     db.prepare('DELETE FROM inbound_log WHERE received_at < ?').bind(now - 30 * DAY),
     db.prepare('DELETE FROM audit_log WHERE created_at < ?').bind(now - 365 * DAY),
