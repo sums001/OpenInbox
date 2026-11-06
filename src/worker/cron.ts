@@ -6,6 +6,7 @@ import { all } from './db/db';
 import { processQueue } from './services/send';
 import { wakeSnoozed } from './services/threads';
 import { retryUnparsed } from './services/inbound';
+import { reparseQueued } from './services/reparse';
 import { refreshPendingDomains } from './services/providers';
 import { cleanup, purgeOldTrash } from './services/retention';
 import { checkDomainHealth } from './services/domains';
@@ -36,6 +37,7 @@ export async function handleScheduled(controller: ScheduledController, env: Env)
   const minute = new Date(controller.scheduledTime).getUTCMinutes();
   if (minute % 10 === 0) {
     await safely('unparsed', () => retryUnparsed(env));
+    await safely('reparse', () => reparseQueued(env));
     await safely('domains', () => refreshPendingDomains(env));
   }
 }

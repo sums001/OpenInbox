@@ -3,6 +3,7 @@ import { env } from 'cloudflare:test';
 import { useFakeApis } from '../helpers/fake';
 import { Client, deliver, email, setupInstance } from '../helpers/client';
 import { hmacSha256, toBase64Url } from '../../src/worker/lib/crypto';
+import { reparseQueued } from '../../src/worker/services/reparse';
 
 async function connectResend(c: Client) {
   return c.post('/api/admin/providers', { type: 'resend', config: { apiKey: 're_test_key_123' } });
@@ -112,6 +113,103 @@ describe('inbound mail', () => {
     expect((await admin.get(`/api/threads/${adminThread.id}`)).thread.folder).toBe('inbox');
     expect(await bob.status('GET', '/api/admin/overview')).toBe(403);
     expect(await bob.status('GET', `/api/threads?mailbox=${boxes[0].id}`)).toBe(404);
+  });
+});
+
+describe('repairing mail stored with its body as attachments', () => {
+  let admin: Client;
+  beforeEach(async () => {
+    useFakeApis();
+    admin = new Client();
+    await setupInstance(admin);
+  });
+
+  const raw = `From: The Team <team@sender.test>
+To: admin@example.com
+Subject: Welcome aboard
+Message-ID: <welcome@sender.test>
+Content-Type: multipart/related; boundary="rel"
+
+--rel
+Content-Type: multipart/alternative; boundary="alt"
+
+--alt
+Content-Type: text/plain; charset=utf-8
+Content-ID: <text@mj>
+
+Welcome to the team
+--alt
+Content-Type: text/html; charset=utf-8
+Content-ID: <html@mj>
+
+<p>Welcome <b>aboard</b></p>
+--alt--
+--rel
+Content-Type: image/png
+Content-ID: <logo@mj>
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgo=
+--rel--
+`;
+
+  // Puts a received message back in the state the old scanner left it: no body, and its text
+  // parts stored as attachments at their offsets in the raw message.
+  async function breakMessage(subject: string, parts: { type: string; marker: string; name?: string }[]) {
+    const m = (await env.DB.prepare('SELECT id, thread_id FROM messages WHERE subject = ?').bind(subject).first<{ id: number; thread_id: number }>())!;
+    const bytes = raw.replace(/\r?\n/g, '\r\n');
+    const stmts = [
+      env.DB.prepare("UPDATE message_bodies SET text = '', html = NULL WHERE message_id = ?").bind(m.id),
+      env.DB.prepare("UPDATE messages SET snippet = '', has_attachments = 1 WHERE id = ?").bind(m.id),
+      env.DB.prepare("UPDATE threads SET snippet = '', has_attachments = 1 WHERE id = ?").bind(m.thread_id),
+      env.DB.prepare('INSERT INTO reparse_queue (message_id) VALUES (?)').bind(m.id),
+    ];
+    parts.forEach((p, i) =>
+      stmts.push(
+        env.DB.prepare('INSERT INTO attachments (id, message_id, filename, content_type, size, inline, encoding, byte_offset, byte_length, stored) VALUES (?, ?, ?, ?, 10, 0, ?, ?, 10, 1)').bind(
+          m.id * 10 + i,
+          m.id,
+          p.name ?? '',
+          p.type,
+          '7bit',
+          bytes.indexOf(p.marker),
+        ),
+      ),
+    );
+    await env.DB.batch(stmts);
+    return m;
+  }
+
+  it('restores the body from the raw message and drops the false attachments', async () => {
+    await deliver(raw, { from: 'team@sender.test', to: 'admin@example.com' });
+    const m = await breakMessage('Welcome aboard', [
+      { type: 'text/plain', marker: 'Welcome to the team' },
+      { type: 'text/html', marker: '<p>Welcome' },
+    ]);
+    expect(await reparseQueued(env)).toBe(1);
+    const t = await admin.get(`/api/threads/${m.thread_id}`);
+    expect(t.messages[0].text).toBe('Welcome to the team');
+    expect(t.messages[0].html).toBe('<p>Welcome <b>aboard</b></p>');
+    expect(t.messages[0].attachments.map((a: { contentType: string }) => a.contentType)).toEqual(['image/png']);
+    expect(t.thread.snippet).toBe('Welcome to the team');
+    expect(t.thread.hasAttachments).toBe(false);
+    expect((await admin.get('/api/search?q=aboard')).threads).toHaveLength(1);
+    expect((await env.DB.prepare('SELECT COUNT(*) AS n FROM reparse_queue').first<{ n: number }>())!.n).toBe(0);
+  });
+
+  it('leaves real text attachments alone', async () => {
+    await deliver(email({ subject: 'Has notes', body: 'See the notes.' }), { from: 'ann@sender.test', to: 'admin@example.com' });
+    const m = (await env.DB.prepare("SELECT id FROM messages WHERE subject = 'Has notes'").first<{ id: number }>())!;
+    // An attachment the raw message's scan doesn't account for, but not at a text part's offset.
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO attachments (id, message_id, filename, content_type, size, encoding, byte_offset, byte_length, stored) VALUES (?, ?, 'notes.txt', 'text/plain', 5, '7bit', NULL, NULL, 1)").bind(m.id * 10, m.id),
+      env.DB.prepare('INSERT INTO reparse_queue (message_id) VALUES (?)').bind(m.id),
+    ]);
+    expect(await reparseQueued(env)).toBe(0);
+    const body = await env.DB.prepare('SELECT text FROM message_bodies WHERE message_id = ?').bind(m.id).first<{ text: string }>();
+    expect(body!.text).toContain('See the notes.');
+    expect((await env.DB.prepare('SELECT COUNT(*) AS n FROM attachments WHERE message_id = ?').bind(m.id).first<{ n: number }>())!.n).toBe(1);
+    expect((await env.DB.prepare('SELECT COUNT(*) AS n FROM reparse_queue').first<{ n: number }>())!.n).toBe(0);
   });
 });
 
