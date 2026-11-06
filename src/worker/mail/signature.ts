@@ -21,14 +21,18 @@ export async function sanitizeSignature(html: string): Promise<string> {
           el.removeAndKeepContent();
           return;
         }
+        // Browsers use the first of duplicate attributes and setAttribute changes only the first,
+        // so rebuild the attributes from the first of each name.
+        const first = new Map<string, string>();
         for (const [name, value] of [...el.attributes]) {
           const n = name.toLowerCase();
-          if (!ATTRS.has(n) || ((n === 'href' || n === 'src') && !isSafeSignatureUrl(n, value))) el.removeAttribute(name);
-          else if (n === 'style') {
-            const style = cleanSignatureStyle(value);
-            if (style) el.setAttribute(name, style);
-            else el.removeAttribute(name);
-          }
+          if (!first.has(n)) first.set(n, value);
+          el.removeAttribute(name);
+        }
+        for (const [n, value] of first) {
+          if (!ATTRS.has(n) || ((n === 'href' || n === 'src') && !isSafeSignatureUrl(n, value))) continue;
+          const v = n === 'style' ? cleanSignatureStyle(value) : value;
+          if (v) el.setAttribute(n, v);
         }
         if (tag === 'a') {
           el.setAttribute('target', '_blank');

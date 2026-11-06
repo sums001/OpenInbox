@@ -20,10 +20,12 @@ export const SIGNATURE_DROP_WITH_CONTENT = [
 ];
 
 // Formatting only: nothing that can lift an element out of the page flow (position, z-index)
-// or load something (url(), image-set()).
+// or load something (url(), image-set()). No "&" either: the Worker sees attribute values with
+// character references still encoded, and a browser decodes "u&#114l(" to "url(" (even without
+// the semicolon) and "&#59;" to a new declaration.
 const STYLE_PROPS =
   /^(color|background-color|font(-(family|size|weight|style|variant))?|text-(decoration|align|transform)|letter-spacing|line-height|vertical-align|white-space|(margin|padding)(-(top|right|bottom|left))?|border(-[a-z-]+)?|(min-|max-)?(width|height))$/;
-const STYLE_VALUE_BAD = /url\s*\(|image-set|expression|javascript:|@import|\\|[<>]/i;
+const STYLE_VALUE_BAD = /url\s*\(|image-set|expression|javascript:|@import|\\|[<>&]/i;
 
 export function cleanSignatureStyle(style: string): string {
   return style

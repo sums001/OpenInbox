@@ -159,6 +159,15 @@ describe('signature sanitizer', () => {
     expect(out).toBe('<img><a target="_blank" rel="noopener noreferrer">a</a>ok');
   });
 
+  it('is not fooled by character references or duplicate attributes', async () => {
+    expect(await sanitizeSignature('<span style="border-image:u&#114l(https://e.test/t.png) 30;color:red">x</span>')).toBe('<span style="color:red">x</span>');
+    expect(await sanitizeSignature('<span style="color:red&#59;position:fixed">x</span>')).toBe('<span>x</span>');
+    expect(await sanitizeSignature('<span style="color:red" style="border-image:url(x)">x</span>')).toBe('<span style="color:red">x</span>');
+    expect(await sanitizeSignature('<a href="https://ok.test/?a=1&amp;b=2" href="javascript:alert(1)">a</a>')).toBe(
+      '<a href="https://ok.test/?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">a</a>',
+    );
+  });
+
   it('drops url() and positioning from styles', async () => {
     expect(await sanitizeSignature('<span style="background:url(//e.test/t.gif);z-index:9;font-size:12px">x</span>')).toBe('<span style="font-size:12px">x</span>');
   });
