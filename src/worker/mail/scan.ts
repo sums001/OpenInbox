@@ -100,7 +100,14 @@ function decodeBody(buf: Buffer, start: number, end: number, encoding: string, c
   return decodeCharset(bytes, charset).replace(/\r\n/g, '\n');
 }
 
-function walk(buf: Buffer, start: number, end: number, out: ScanResult, depth: number): void {
+// Unnamed text parts that were filed as attachments, in case the message turns out to have no body.
+interface TextCandidate {
+  key: 'text' | 'html';
+  charset: string | undefined;
+  attachment: ScannedAttachment;
+}
+
+function walk(buf: Buffer, start: number, end: number, out: ScanResult, depth: number, candidates: TextCandidate[]): void {
   const { headerText, bodyStart } = splitHeaders(buf, start, end);
   const headers = headerMap(headerLines(headerText));
   const type = parseStructured(headers.get('content-type') || 'text/plain');
@@ -120,7 +127,7 @@ function walk(buf: Buffer, start: number, end: number, out: ScanResult, depth: n
       while (next !== -1 && buf[next - 1] !== 0x0a) next = buf.indexOf(delim, next + 1); // must start a line
       const stop = next === -1 || next > end ? end : next;
       const partEnd = stop === end ? end : stop - (buf[stop - 2] === 0x0d ? 2 : 1);
-      if (partEnd > partStart) walk(buf, partStart, partEnd, out, depth + 1);
+      if (partEnd > partStart) walk(buf, partStart, partEnd, out, depth + 1, candidates);
       pos = next === -1 || next >= end ? -1 : next;
     }
     return;
@@ -128,7 +135,9 @@ function walk(buf: Buffer, start: number, end: number, out: ScanResult, depth: n
 
   const filename = decodeParam(disposition.params, 'filename') ?? decodeParam(type.params, 'name');
   const isText = type.value === 'text/plain' || type.value === 'text/html';
-  const isAttachment = disposition.value === 'attachment' || headers.has('content-id') || !isText;
+  // A text part is body unless it is declared an attachment. A Content-ID doesn't make it one:
+  // multipart/related names its HTML root with an ID, and some bulk senders give every part one.
+  const isAttachment = disposition.value === 'attachment' || !isText;
   if (!isAttachment) {
     const key = type.value === 'text/html' ? 'html' : 'text';
     if (out[key] == null) {
@@ -144,7 +153,7 @@ function walk(buf: Buffer, start: number, end: number, out: ScanResult, depth: n
   }
 
   const length = Math.max(0, end - bodyStart);
-  out.attachments.push({
+  const attachment: ScannedAttachment = {
     filename,
     contentType: type.value || 'application/octet-stream',
     contentId: headers.get('content-id')?.replace(/^<|>$/g, '').trim() || null,
@@ -153,7 +162,9 @@ function walk(buf: Buffer, start: number, end: number, out: ScanResult, depth: n
     offset: bodyStart,
     length,
     approxSize: encoding === 'base64' ? Math.floor(length * 0.74) : length,
-  });
+  };
+  out.attachments.push(attachment);
+  if (isText && !filename) candidates.push({ key: type.value === 'text/html' ? 'html' : 'text', charset: type.params.charset, attachment });
 }
 
 export function scan(raw: ArrayBuffer | Uint8Array): ScanResult {
@@ -167,6 +178,16 @@ export function scan(raw: ArrayBuffer | Uint8Array): ScanResult {
     html: null,
     attachments: [],
   };
-  walk(buf, 0, buf.length, out, 0);
+  const candidates: TextCandidate[] = [];
+  walk(buf, 0, buf.length, out, 0, candidates);
+  // Some senders mark their body parts as attachments. With no other body, show the first
+  // unnamed text and HTML parts as the body rather than as files called "attachment".
+  if (out.text == null && out.html == null) {
+    for (const c of candidates) {
+      if (out[c.key] != null) continue;
+      out[c.key] = decodeBody(buf, c.attachment.offset, c.attachment.offset + c.attachment.length, c.attachment.encoding, c.charset);
+      out.attachments.splice(out.attachments.indexOf(c.attachment), 1);
+    }
+  }
   return out;
 }
