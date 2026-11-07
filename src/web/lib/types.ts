@@ -93,6 +93,7 @@ export interface Message {
   truncated: boolean;
   rawAvailable: boolean;
   auth: { spf: string | null; dkim: string | null; dmarc: string | null };
+  fromLogo: string | null;
   spamReason: string | null;
   listUnsubscribe: { url?: string; mailto?: string; oneClick: boolean } | null;
   error: string | null;
