@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
-import { EditorContent, useEditor, type Editor } from '@tiptap/react';
+import { EditorContent, Node, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Placeholder } from '@tiptap/extension-placeholder';
 import {
@@ -74,14 +74,54 @@ export interface SendRequest {
 const SIGNATURE_MARK = 'data-oi-signature';
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
+// Where quoted history starts: the "On … wrote:" line before a reply's blockquote, or the
+// forwarded-message marker.
+const startsQuote = (el: Element) =>
+  el.tagName === 'P' &&
+  ((/^On .{4,200} wrote:$/.test(el.textContent ?? '') && el.nextElementSibling?.tagName === 'BLOCKQUOTE') || (el.textContent ?? '').startsWith('---------- Forwarded message'));
+
+// Puts the mailbox's signature in a message, replacing the one already there. Only a top-level
+// signature above the quoted history is ours: a quoted message sent from OpenInbox has its own.
 export function withSignature(html: string, signature: string): string {
-  const stripped = html.replace(new RegExp(`<div ${SIGNATURE_MARK}[^>]*>[\\s\\S]*?</div>(?![\\s\\S]*<div ${SIGNATURE_MARK})`), '');
-  if (!signature.trim()) return stripped;
-  const block = `<div ${SIGNATURE_MARK}="1"><p>-- </p>${cleanSignature(signature)}</div>`;
-  // Above quoted history, like most clients.
-  const quote = stripped.search(/<p>On .{4,200} wrote:<\/p><blockquote>|<p>---------- Forwarded message/);
-  return quote >= 0 ? `${stripped.slice(0, quote)}${block}${stripped.slice(quote)}` : `${stripped}${block}`;
+  const t = document.createElement('template');
+  t.innerHTML = html;
+  const top = [...t.content.children];
+  const quote = top.findIndex(startsQuote);
+  top
+    .slice(0, quote >= 0 ? quote : undefined)
+    .filter((el) => el.hasAttribute(SIGNATURE_MARK))
+    .pop()
+    ?.remove();
+  if (signature.trim()) {
+    const block = document.createElement('div');
+    block.setAttribute(SIGNATURE_MARK, '1');
+    block.innerHTML = `<p>-- </p>${cleanSignature(signature)}`;
+    // Above quoted history, like most clients.
+    t.content.insertBefore(block, [...t.content.children].find(startsQuote) ?? null);
+  }
+  return t.innerHTML;
 }
+
+// The signature as one block that keeps its own HTML. The editor's schema has no tables, images
+// or inline styles, so parsing a designed signature into it would flatten it (#11). The block
+// can be deleted but not edited in place; it is cleaned again whenever it is rendered.
+const SignatureBlock = Node.create({
+  name: 'signature',
+  group: 'block',
+  atom: true,
+  addAttributes() {
+    return { html: { default: '', parseHTML: (el) => el.innerHTML, rendered: false } };
+  },
+  parseHTML() {
+    return [{ tag: `div[${SIGNATURE_MARK}]` }];
+  },
+  renderHTML({ node }) {
+    const dom = document.createElement('div');
+    dom.setAttribute(SIGNATURE_MARK, '1');
+    dom.innerHTML = cleanSignature(node.attrs.html as string);
+    return dom;
+  },
+});
 
 function Toolbar({ editor, onLink }: { editor: Editor | null; onLink: () => void }) {
   if (!editor) return null;
@@ -163,7 +203,7 @@ export function Composer({
   const attachmentsOn = session?.storageMode === 'r2';
 
   const editor = useEditor({
-    extensions: [StarterKit.configure({ link: { openOnClick: false, autolink: true, HTMLAttributes: { rel: 'noopener noreferrer' } } }), Placeholder.configure({ placeholder: 'Write your message…' })],
+    extensions: [StarterKit.configure({ link: { openOnClick: false, autolink: true, HTMLAttributes: { rel: 'noopener noreferrer' } } }), SignatureBlock, Placeholder.configure({ placeholder: 'Write your message…' })],
     content: initial.html,
     autofocus: variant === 'inline' ? 'start' : false,
     onUpdate: ({ editor: e }) => {

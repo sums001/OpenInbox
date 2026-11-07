@@ -101,7 +101,7 @@ function Signature({ box }: { box: Mailbox }) {
         <Field label="Sender name">
           <Input value={s.displayName} onChange={(e) => setS({ ...s, displayName: e.target.value })} disabled={!box.canSend} />
         </Field>
-        <Field label="Signature" hint="Plain text or simple HTML (links, bold, line breaks).">
+        <Field label="Signature" hint="Plain text or HTML, such as a signature from a generator. Tables, images, links and styles are kept; scripts and positioning are removed.">
           <Textarea value={s.signature} onChange={(e) => setS({ ...s, signature: e.target.value })} rows={4} className="font-mono text-[13px]" disabled={!box.canSend} />
         </Field>
         {s.signature && (

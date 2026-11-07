@@ -170,6 +170,25 @@ describe('signature sanitizer', () => {
 
   it('drops url() and positioning from styles', async () => {
     expect(await sanitizeSignature('<span style="background:url(//e.test/t.gif);z-index:9;font-size:12px">x</span>')).toBe('<span style="font-size:12px">x</span>');
+    expect(await sanitizeSignature('<span style="background:image(\'t.png\');display:block;position:absolute">x</span>')).toBe('<span style="display:block">x</span>');
+  });
+
+  // Issue #11: the table layout signature generators produce.
+  it('keeps a designed signature', async () => {
+    const sig =
+      '<table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;font-family:Arial,sans-serif">' +
+      '<tr><td width="80" valign="top" style="padding-right:12px;border-right:2px solid #0b5fff">' +
+      '<img src="https://cdn.example.com/logo.png" width="64" height="64" alt="Acme" style="display:block;border-radius:8px"></td>' +
+      '<td bgcolor="#f5f7fa" style="padding-left:12px;background:#f5f7fa;line-height:1.4">' +
+      '<b style="font-size:15px;color:#111">Ann Lee</b><br><span style="color:#667">Head of Sales</span><br>' +
+      '<a href="tel:+15550100" style="color:#0b5fff;text-decoration:none">+1 555 0100</a> ' +
+      '<a href="https://acme.example"><img src="https://cdn.example.com/in.png" width="16" height="16" alt="LinkedIn" style="display:inline-block;vertical-align:middle"></a>' +
+      '</td></tr></table>';
+    const out = await sanitizeSignature(sig);
+    expect(out.match(/<\/?[a-z]+/g)).toEqual(sig.match(/<\/?[a-z]+/g));
+    for (const kept of ['cellpadding="0"', 'border-collapse:collapse', 'bgcolor="#f5f7fa"', 'background:#f5f7fa', 'display:block', 'display:inline-block', 'border-radius:8px', 'src="https://cdn.example.com/logo.png"', 'href="tel:+15550100"']) {
+      expect(out).toContain(kept);
+    }
   });
 });
 

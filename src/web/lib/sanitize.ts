@@ -155,12 +155,44 @@ img[data-oi-blocked]{display:none}
 </style></head><body>${body}</body></html>`;
 }
 
-// A mailbox signature (plain text or simple HTML) as safe HTML. Used on preview, save and
-// send, so a signature stored before this cleaning existed is cleaned too. The Worker cleans it
-// again on save with the same allowlist.
+// Signature generators often style with a <style> block and classes, which the allowlist drops
+// (as many mail apps do). Their rules are copied onto the elements as inline styles first, in
+// source order and before the element's own style, and then go through the same allowlist.
+function inlineStyleBlocks(html: string): string {
+  if (!/<style[\s>]/i.test(html)) return html;
+  const t = document.createElement('template');
+  t.innerHTML = html;
+  const styles = new Map<Element, string[]>();
+  for (const block of t.content.querySelectorAll('style')) {
+    let rules: CSSRule[];
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(block.textContent ?? '');
+      rules = [...sheet.cssRules];
+    } catch {
+      continue;
+    }
+    for (const rule of rules) {
+      if (!(rule instanceof CSSStyleRule)) continue;
+      let targets: NodeListOf<Element>;
+      try {
+        targets = t.content.querySelectorAll(rule.selectorText);
+      } catch {
+        continue;
+      }
+      for (const el of targets) styles.set(el, [...(styles.get(el) ?? []), rule.style.cssText]);
+    }
+  }
+  for (const [el, rules] of styles) el.setAttribute('style', [...rules, el.getAttribute('style') ?? ''].join(' ').trim());
+  return t.innerHTML;
+}
+
+// A mailbox signature (plain text or HTML) as safe HTML. Used on preview, save and send, so a
+// signature stored before this cleaning existed is cleaned too. The Worker cleans it again on
+// save with the same allowlist.
 export function cleanSignature(raw: string): string {
   const looksHtml = /<\/?[a-z][\s\S]*>/i.test(raw);
-  const html = looksHtml ? raw : raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>');
+  const html = looksHtml ? inlineStyleBlocks(raw) : raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>');
   DOMPurify.addHook('uponSanitizeAttribute', (_node, data) => {
     if (data.attrName === 'style') {
       data.attrValue = cleanSignatureStyle(data.attrValue);
