@@ -31,7 +31,8 @@ interface SetupStatus {
     zones: Check & { count: number };
   };
   permissions: PermissionCheck[];
-  zones: { id: string; name: string; status: string }[];
+  // usable: whether the token can manage the zone (null: not checked).
+  zones: { id: string; name: string; status: string; usable: boolean | null }[];
 }
 
 type Stage = 'checks' | 'admin' | 'domain' | 'done';
@@ -113,7 +114,7 @@ export function SetupPage() {
         )}
         {stage === 'admin' && status.data && (
           <AdminStage
-            zones={status.data.zones}
+            zones={status.data.zones.filter((z) => z.usable !== false)}
             keyState={status.data.checks.encryptionKey.state}
             onBack={() => setStage('checks')}
             onClaimed={(c) => {
@@ -433,7 +434,16 @@ function ChecksStage({
               <div className="mt-2 rounded-lg border border-border px-3 py-1">
                 <ResultLine check={c!.worker} />
                 <ResultLine check={c!.zones}>
-                  {c!.zones.ok && <div className="mt-1.5 flex flex-wrap gap-1.5">{status!.zones.map((z) => <Badge key={z.id}>{z.name}</Badge>)}</div>}
+                  {c!.zones.ok && (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {status!.zones
+                        .filter((z) => z.usable !== false)
+                        .map((z) => (
+                          <Badge key={z.id}>{z.name}</Badge>
+                        ))}
+                    </div>
+                  )}
+                  <NotCovered zones={status!.zones.filter((z) => z.usable === false).map((z) => z.name)} />
                   {!c!.zones.ok && c!.zones.count === 0 && (
                     <a href="https://dash.cloudflare.com/?to=/:account/add-site" target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-primary-text hover:underline">
                       Add a domain to Cloudflare <ExternalLink className="h-3.5 w-3.5" />
@@ -479,6 +489,16 @@ function ChecksStage({
           Continue
         </Button>
       </div>
+    </div>
+  );
+}
+
+// Domains the token can see but not manage (#12): it was limited to the others.
+function NotCovered({ zones }: { zones: string[] }) {
+  if (!zones.length) return null;
+  return (
+    <div className="mt-1.5 text-xs text-muted">
+      Not covered by this token: {zones.join(', ')}. To use {zones.length === 1 ? 'it' : 'one of them'}, add it to the token's zone resources in Cloudflare, then check again.
     </div>
   );
 }
