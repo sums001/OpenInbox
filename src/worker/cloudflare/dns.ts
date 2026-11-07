@@ -2,8 +2,9 @@
 // already has, then apply them. Planning is pure, so it is unit tested; applying is idempotent.
 import type { Cloudflare } from './client';
 import { isSpf, mergeSpf, spfIncludes, unquoteTxt } from './spf';
+import { isBimi } from '../mail/bimi';
 
-export type RecordPurpose = 'spf' | 'dkim' | 'dmarc' | 'verification' | 'return-path' | 'mx' | 'tracking' | 'other';
+export type RecordPurpose = 'spf' | 'dkim' | 'dmarc' | 'bimi' | 'verification' | 'return-path' | 'mx' | 'tracking' | 'other';
 
 export interface DnsRecordSpec {
   type: 'TXT' | 'CNAME' | 'MX';
@@ -81,8 +82,10 @@ export function planRecords(domain: string, existing: CfDnsRecord[], desired: Dn
         actions.push({ op: 'conflict', spec, name, message: `${name} is a CNAME, so it can't also hold a TXT record.` });
         continue;
       }
-      // A DKIM key at the same name is replaced; anything else gets an extra TXT record.
-      const old = purpose === 'dkim' ? atName.find((r) => r.type === 'TXT' && isDkim(r.content)) : undefined;
+      // A DKIM key or BIMI record at the same name is replaced; anything else gets an extra TXT
+      // record.
+      const replaces = purpose === 'dkim' ? isDkim : purpose === 'bimi' ? (c: string) => isBimi(unquoteTxt(c)) : null;
+      const old = replaces ? atName.find((r) => r.type === 'TXT' && replaces(r.content)) : undefined;
       actions.push(
         old
           ? { op: 'update', spec, name, type: 'TXT', content: spec.content, recordId: old.id }
