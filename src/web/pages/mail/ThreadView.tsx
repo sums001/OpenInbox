@@ -42,7 +42,8 @@ import {
 import { del, get, post, errorText } from '../../lib/api';
 import { bytes, displayName, formatAddress, fullDate, listDate, timeAgo } from '../../lib/format';
 import { forwardHtml, ownAddresses, quoteHtml, replyFrom, replyRecipients, snoozePresets } from '../../lib/mail';
-import { splitQuoted, textToSafeHtml } from '../../lib/sanitize';
+import { splitQuoted } from '../../lib/sanitize';
+import { textToSafeHtml } from '../../lib/linkify';
 import { useSession, useUser } from '../../lib/session';
 import { cn, storageGet } from '../../lib/utils';
 import type { Attachment, Mailbox, Message, ThreadDetail } from '../../lib/types';
