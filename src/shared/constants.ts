@@ -29,10 +29,13 @@ export const DEFAULT_SETTINGS = {
   spamRetentionDays: 30,
   spamPolicy: 'spam' as SpamPolicy,
   remoteImages: 'block' as RemoteImagesPolicy,
+  senderLogos: 'off' as SenderLogosPolicy,
 };
 
 export type SpamPolicy = 'spam' | 'reject' | 'off';
 export type RemoteImagesPolicy = 'block' | 'allow';
+// Senders' BIMI logos next to their mail, for the whole instance.
+export type SenderLogosPolicy = 'off' | 'on';
 
 export const PROVIDER_TYPES = ['resend', 'brevo', 'mailjet', 'cloudflare', 'smtp'] as const;
 export type ProviderType = (typeof PROVIDER_TYPES)[number];

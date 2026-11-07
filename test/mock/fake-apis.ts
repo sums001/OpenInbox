@@ -1,4 +1,5 @@
-// In-memory fakes of the Cloudflare, Resend, Brevo, Mailjet and GitHub APIs, shared by the unit
+// In-memory fakes of the Cloudflare, Resend, Brevo, Mailjet and GitHub APIs (plus public DNS over
+// HTTPS and a host for senders' logos), shared by the unit
 // tests (through a fetch spy), the end-to-end tests and local development (test/mock/server.ts).
 // Only erasable TypeScript syntax, so Node can run it directly.
 
@@ -41,6 +42,9 @@ export interface FakeState {
   mailjet: { dns: Record<string, { id: number }>; emails: Record<string, unknown>[] };
   cfSending: { entitled: boolean; failNext: number; emails: Record<string, unknown>[] };
   release: { tag_name: string; html_url: string; body: string } | null;
+  // Public DNS (cloudflare-dns.com): TXT records by name. Files served at https://logos.test/<path>.
+  publicTxt: Record<string, string[]>;
+  logos: Record<string, string>;
   requests: { method: string; url: string; body?: unknown }[];
   seq: number;
 }
@@ -75,6 +79,8 @@ export function createFakeState(): FakeState {
     mailjet: { dns: {}, emails: [] },
     cfSending: { entitled: true, failNext: 0, emails: [] },
     release: { tag_name: 'v1.0.0', html_url: 'https://github.com/example/openinbox/releases/tag/v1.0.0', body: 'First release.' },
+    publicTxt: {},
+    logos: {},
     requests: [],
     seq: 1,
   };
@@ -112,6 +118,16 @@ export async function handleFake(state: FakeState, req: Request): Promise<Respon
   const url = new URL(req.url);
   let service: string;
   let path = url.pathname;
+  if (url.hostname === 'cloudflare-dns.com' && path === '/dns-query') {
+    state.requests.push({ method: req.method, url: `doh${url.search}` });
+    const name = url.searchParams.get('name') ?? '';
+    const txt = state.publicTxt[name] ?? [];
+    return json({ Status: txt.length ? 0 : 3, Answer: txt.map((data) => ({ name, type: 16, TTL: 300, data: `"${data}"` })) });
+  }
+  if (url.hostname === 'logos.test') {
+    state.requests.push({ method: req.method, url: `logos${path}` });
+    return path in state.logos ? new Response(state.logos[path], { headers: { 'Content-Type': 'image/svg+xml' } }) : new Response('Not found', { status: 404 });
+  }
   const hostMap: Record<string, string> = { 'cf.test': 'cf', 'resend.test': 'resend', 'brevo.test': 'brevo', 'mailjet.test': 'mailjet', 'github.test': 'github' };
   if (hostMap[url.hostname]) {
     service = hostMap[url.hostname];

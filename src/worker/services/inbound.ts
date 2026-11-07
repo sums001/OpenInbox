@@ -24,6 +24,7 @@ import { applyFilters, loadFilters, type FilterActions } from './filters';
 import { counterStmt, dailyStatStmt, inboundLogStmt, logInbound } from './stats';
 import { bumpState, type AutoReply } from './mailboxes';
 import { maybeAutoReply } from './autoreply';
+import { noteSenderStmt, senderDomain } from './sender-logos';
 
 export interface Recipient {
   mailboxId: number;
@@ -381,6 +382,10 @@ export async function ingest(c: Context, bytes: Uint8Array, o: IngestOptions): P
         )
         .bind(mailboxId, p.from.address, p.from.name, now),
     );
+  }
+  // Senders' logos: the cron looks up the logo of a domain whose mail passes DMARC.
+  if (settings.senderLogos === 'on' && auth.dmarc === 'pass' && o.message && !spamReason && p.from.address.includes('@')) {
+    stmts.push(noteSenderStmt(db, senderDomain(p.from.address), now));
   }
   stmts.push(
     dailyStatStmt(db, mailboxId, spamReason ? 'spam' : 'received'),
