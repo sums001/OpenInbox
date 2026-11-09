@@ -14,8 +14,8 @@ import { logError } from '../lib/log';
 
 const DOH = 'https://cloudflare-dns.com/dns-query';
 // A lookup makes at most five requests (BIMI and DMARC records at the domain and its
-// organizational domain, then the logo); five domains per run stay well inside the cron's
-// subrequest limit.
+// organizational domain, then the logo). Five domains per run is 25 requests, which run on their
+// own cron minute (cron.ts) to stay inside the free plan's 50 subrequests per invocation.
 const PER_RUN = 5;
 // Domains that haven't sent mail passing DMARC for this long are dropped from the cache.
 export const SENDER_LOGO_WINDOW = 30 * DAY;
