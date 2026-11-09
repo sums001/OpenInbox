@@ -85,6 +85,17 @@ test('setup, send, receive, reply, search and isolate members', async ({ page, b
   await page.getByRole('button', { name: 'Done' }).click();
   await expect(page.getByText('Verified for sending')).toBeVisible();
 
+  // The sender logo dialog fixes what keeps mail apps from showing a logo: here the p=none DMARC
+  // policy setup added.
+  await page.goto('/admin/domains');
+  await page.getByRole('button', { name: 'Add a logo' }).click();
+  await expect(page.getByText("DMARC isn't enforced")).toBeVisible();
+  await page.getByRole('button', { name: 'Fix' }).click();
+  await expect(page.getByText('_dmarc.example.com becomes')).toContainText('v=DMARC1; p=quarantine');
+  await page.getByRole('button', { name: 'Enforce DMARC' }).click();
+  await expect(page.getByText('DMARC is enforced')).toBeVisible();
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
+
   // 3. Add a member with their own inbox.
   await page.goto('/admin/users');
   await page.getByRole('button', { name: 'Add a user' }).click();

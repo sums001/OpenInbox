@@ -353,8 +353,35 @@ function SenderLogoDialog({ domain, onClose }: { domain: DomainInfo; onClose: ()
   const svgInput = useRef<HTMLInputElement>(null);
   const certInput = useRef<HTMLInputElement>(null);
   const { run, busy } = useAction();
+  const invalidate = useInvalidate();
+  const [enforcing, setEnforcing] = useState(false);
   const s = status.data;
   const preview = svg?.preview ?? s?.logo?.url;
+  const refresh = () => invalidate(['admin', 'logo', domain.id]);
+  // One click for each problem the checks find. The record is written again as Save does.
+  const rewriteRecord = () => put(`/admin/domains/${domain.id}/logo`, {});
+  const enforceDmarc = () =>
+    run(
+      'dmarc',
+      async () => {
+        await post(`/admin/domains/${domain.id}/dmarc/enforce`);
+        setEnforcing(false);
+        await refresh();
+      },
+      'DMARC enforced',
+    );
+  // Only when this page itself is served over HTTPS: that address is known to work.
+  const httpsOrigin = location.protocol === 'https:' ? location.origin : null;
+  const switchToHttps = () =>
+    run(
+      'https',
+      async () => {
+        await patch('/admin/settings', { appUrl: httpsOrigin });
+        if (s?.logo) await rewriteRecord();
+        await refresh();
+      },
+      `App address set to ${httpsOrigin}`,
+    );
   const hasCert = cert === undefined ? !!s?.logo?.certificateUrl : !!cert;
 
   useEffect(() => () => (svg ? URL.revokeObjectURL(svg.preview) : undefined), [svg]);
@@ -442,17 +469,72 @@ function SenderLogoDialog({ domain, onClose }: { domain: DomainInfo; onClose: ()
           </div>
           {s && (
             <div className="overflow-hidden rounded-lg border border-border">
-              <LogoCheck ok={s.dmarc.enforced} label={s.dmarc.enforced ? 'DMARC is enforced' : "DMARC isn't enforced"}>
+              <LogoCheck
+                ok={s.dmarc.enforced}
+                label={s.dmarc.enforced ? 'DMARC is enforced' : "DMARC isn't enforced"}
+                action={
+                  !s.dmarc.enforced &&
+                  !enforcing && (
+                    <Button size="xs" icon={<Wrench />} onClick={() => setEnforcing(true)}>
+                      Fix
+                    </Button>
+                  )
+                }
+              >
                 {s.dmarc.enforced
                   ? s.dmarc.record
-                  : `Mail apps show the logo only under p=quarantine or p=reject. ${s.dmarc.record ? `It is ${s.dmarc.record}.` : 'There is no DMARC record.'} Change it in Cloudflare DNS once your mail passes DMARC; the reports p=none sends help you check.`}
+                  : `Mail apps show the logo only under p=quarantine or p=reject. ${s.dmarc.record ? `It is ${s.dmarc.record}.` : 'There is no DMARC record.'}`}
+                {enforcing && s.dmarc.fix && (
+                  <div className="mt-2 flex flex-col gap-2 rounded-md border border-border bg-surface-2 p-2.5">
+                    <div>
+                      _dmarc.{domain.name} becomes <span className="font-mono text-fg">{s.dmarc.fix}</span>
+                    </div>
+                    <div>
+                      Mail that fails DMARC then goes to spam. First check that everything sending as {domain.name} passes it: OpenInbox&apos;s providers and any other service, such as a newsletter tool.
+                      {s.dmarc.record && /rua=/i.test(s.dmarc.record) ? ' The DMARC reports your record already asks for show which mail passes.' : ''}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="xs" variant="primary" loading={busy === 'dmarc'} onClick={enforceDmarc}>
+                        Enforce DMARC
+                      </Button>
+                      <Button size="xs" variant="ghost" onClick={() => setEnforcing(false)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </LogoCheck>
-              <LogoCheck ok={s.https} label={s.https ? 'Served over HTTPS' : "Not served over HTTPS"}>
-                {s.https ? (s.logo?.url ?? 'From this app’s address.') : 'Mail apps fetch logos over HTTPS only. Set the app’s https address in Admin → Settings.'}
+              <LogoCheck
+                ok={s.https}
+                label={s.https ? 'Served over HTTPS' : 'Not served over HTTPS'}
+                action={
+                  !s.https &&
+                  httpsOrigin && (
+                    <Button size="xs" icon={<Wrench />} loading={busy === 'https'} onClick={switchToHttps}>
+                      Fix
+                    </Button>
+                  )
+                }
+              >
+                {s.https
+                  ? (s.logo?.url ?? 'From this app’s address.')
+                  : httpsOrigin
+                    ? `Mail apps fetch logos over HTTPS only. Fix sets the app’s address to ${httpsOrigin}.`
+                    : 'Mail apps fetch logos over HTTPS only. Set the app’s https address in Admin → Settings.'}
               </LogoCheck>
               {s.logo && (
-                <LogoCheck ok={s.record.current === s.record.expected} label={s.record.current === s.record.expected ? `${s.record.name} is in place` : `${s.record.name} doesn't match`}>
-                  {s.record.current === s.record.expected ? s.record.current : `Expected ${s.record.expected}, found ${s.record.current ?? 'none'}. Save again to rewrite it.`}
+                <LogoCheck
+                  ok={s.record.current === s.record.expected}
+                  label={s.record.current === s.record.expected ? `${s.record.name} is in place` : `${s.record.name} doesn't match`}
+                  action={
+                    s.record.current !== s.record.expected && (
+                      <Button size="xs" icon={<Wrench />} loading={busy === 'record'} onClick={() => run('record', () => rewriteRecord().then(refresh), `${s.record.name} rewritten`)}>
+                        Fix
+                      </Button>
+                    )
+                  }
+                >
+                  {s.record.current === s.record.expected ? s.record.current : `Expected ${s.record.expected}, found ${s.record.current ?? 'none'}.`}
                 </LogoCheck>
               )}
             </div>
@@ -463,14 +545,15 @@ function SenderLogoDialog({ domain, onClose }: { domain: DomainInfo; onClose: ()
   );
 }
 
-function LogoCheck({ ok, label, children }: { ok: boolean; label: string; children: ReactNode }) {
+function LogoCheck({ ok, label, action, children }: { ok: boolean; label: string; action?: ReactNode; children: ReactNode }) {
   return (
     <div className="flex gap-2.5 border-b border-border px-3.5 py-2.5 last:border-b-0">
       {ok ? <CircleCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" /> : <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />}
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <div className="text-[13px] font-medium">{label}</div>
         <div className="text-xs break-words text-muted">{children}</div>
       </div>
+      {action && <div className="shrink-0">{action}</div>}
     </div>
   );
 }
