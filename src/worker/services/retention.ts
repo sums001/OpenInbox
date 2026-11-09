@@ -41,6 +41,8 @@ export async function cleanup(env: Env): Promise<void> {
     db.prepare('DELETE FROM auth_attempts WHERE window_start < ?').bind(now - DAY),
     db.prepare('DELETE FROM known_logins WHERE last_at < ?').bind(now - 365 * DAY),
     db.prepare('DELETE FROM api_idempotency WHERE created_at < ?').bind(now - DAY),
+    // Imports that never finished (the cron handles them within minutes).
+    db.prepare('DELETE FROM provider_sent WHERE noted_at < ?').bind(now - 7 * DAY),
     // Opens and clicks name the reader's address and browser: kept for six months.
     db.prepare('DELETE FROM tracking_events WHERE created_at < ?').bind(now - 180 * DAY),
     // Links of deleted messages keep redirecting for a year after sending.

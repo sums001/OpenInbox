@@ -31,10 +31,10 @@ export function remaining(q: QuotaUse): number | null {
   return caps.length ? Math.max(0, Math.min(...caps)) : null;
 }
 
-export function quotaStmt(db: D1Database, providerId: number, n: number): D1PreparedStatement {
+export function quotaStmt(db: D1Database, providerId: number, n: number, day = dayKey()): D1PreparedStatement {
   return db
     .prepare('INSERT INTO quota_usage (provider_id, day, count) VALUES (?, ?, ?) ON CONFLICT (provider_id, day) DO UPDATE SET count = count + excluded.count')
-    .bind(providerId, dayKey(), n);
+    .bind(providerId, day, n);
 }
 
 export async function allQuotaUse(db: D1Database): Promise<Map<number, { today: number; month: number }>> {
