@@ -115,6 +115,25 @@ export async function checkPermissions(cf: Cloudflare, accountId: string, zoneId
   return results;
 }
 
+// A token can be limited to some of the account's zones and still list all of them (Zone: Read
+// on every zone, DNS and Email Routing on a few). Reading each zone's DNS tells which ones it can
+// manage: true, false when Cloudflare refuses, null when unchecked or Cloudflare failed. Only the
+// first `limit` zones are read, to stay well inside the Worker's subrequest limit.
+export async function zoneAccess(cf: Cloudflare, zoneIds: string[], limit = 20): Promise<Map<string, boolean | null>> {
+  const access = new Map<string, boolean | null>(zoneIds.map((id) => [id, null]));
+  await Promise.all(
+    zoneIds.slice(0, limit).map(async (id) => {
+      try {
+        await cf.get(`/zones/${id}/dns_records?per_page=1`);
+        access.set(id, true);
+      } catch (e) {
+        if (e instanceof CfError && e.isAuth) access.set(id, false);
+      }
+    }),
+  );
+  return access;
+}
+
 export interface Zone {
   id: string;
   name: string;

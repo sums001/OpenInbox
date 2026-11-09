@@ -368,9 +368,9 @@ function AppDomainDialog({ domain, onClose, onDone }: { domain: DomainInfo; onCl
 }
 
 function AddDomainDialog({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
-  const zones = useQuery({ queryKey: ['admin', 'zones'], queryFn: () => get<{ id: string; name: string; status: string; connected: boolean }[]>('/admin/zones') });
+  const zones = useQuery({ queryKey: ['admin', 'zones'], queryFn: () => get<{ id: string; name: string; status: string; connected: boolean; usable: boolean | null }[]>('/admin/zones') });
   const all = zones.data ?? [];
-  const available = all.filter((z) => !z.connected);
+  const available = all.filter((z) => !z.connected && z.usable !== false);
   const [zoneId, setZoneId] = useState('');
   const [replaceMx, setReplaceMx] = useState(false);
   const [domainId, setDomainId] = useState<number | null>(null);
@@ -466,19 +466,21 @@ function AddDomainDialog({ onClose, onAdded }: { onClose: () => void; onAdded: (
         <PageSpinner />
       ) : available.length === 0 ? (
         <EmptyState icon={<Globe />} tone="warning" title="No more domains">
-          Every zone on this Cloudflare account is already connected. Add a new domain to Cloudflare first, then come back.
+          {all.some((z) => !z.connected)
+            ? `The Cloudflare token can't manage ${all.filter((z) => !z.connected).map((z) => z.name).join(', ')}. Add ${all.filter((z) => !z.connected).length === 1 ? 'it' : 'them'} to the token's zone resources in Cloudflare, then come back.`
+            : 'Every zone on this Cloudflare account is already connected. Add a new domain to Cloudflare first, then come back.'}
         </EmptyState>
       ) : (
         <div className="flex flex-col gap-2">
           {error && <Alert tone="danger">{error.message}</Alert>}
           {all.map((z) => {
             const on = z.id === zoneId;
-            const desc = z.connected ? 'Already set up' : on ? (inspection.isLoading ? 'Checking mail records…' : mx?.mxState === 'none' ? 'This domain does not receive mail yet.' : mx?.mxState === 'cloudflare' ? 'Email Routing is already on for this domain.' : mx?.mxState === 'other' ? `MX points to ${mx.mx[0]?.host}` : '') : '';
+            const desc = z.connected ? 'Already set up' : z.usable === false ? "The Cloudflare token can't manage this domain. Add it to the token's zone resources." : on ? (inspection.isLoading ? 'Checking mail records…' : mx?.mxState === 'none' ? 'This domain does not receive mail yet.' : mx?.mxState === 'cloudflare' ? 'Email Routing is already on for this domain.' : mx?.mxState === 'other' ? `MX points to ${mx.mx[0]?.host}` : '') : '';
             return (
               <button
                 key={z.id}
                 type="button"
-                disabled={z.connected}
+                disabled={z.connected || z.usable === false}
                 onClick={() => {
                   setZoneId(z.id);
                   setReplaceMx(false);

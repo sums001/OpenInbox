@@ -61,6 +61,39 @@ describe('first-run setup', () => {
     expect(overview.checklist.find((x: { id: string }) => x.id === 'provider').done).toBe(false);
   });
 
+  // Issue #12: Zone: Read on every zone, DNS and Email Routing only on the domains to use.
+  it('accepts a token limited to some of the domains', async () => {
+    fake.state.denied = [/^\/zones\/zone_example\//];
+    const c = new Client();
+    await c.init();
+    const status = await c.get('/api/setup/status');
+    expect(status.checks.zones).toMatchObject({ ok: true, count: 2, message: '1 of 2 domains can be used with this token.' });
+    expect(status.zones.map((z: { name: string; usable: boolean }) => [z.name, z.usable])).toEqual([
+      ['example.com', false],
+      ['workspace.dev', true],
+    ]);
+    // Zone permissions are probed on the domain the token covers, so none is reported missing.
+    expect(status.permissions.filter((p: { ok: boolean; optional: boolean }) => !p.ok && !p.optional)).toEqual([]);
+
+    const claim = { zoneId: 'zone_gmail', localPart: 'admin', displayName: 'Admin', password: 'correct horse battery', setupKey: ENCRYPTION_KEY, replaceMx: true };
+    expect((await c.post('/api/setup/claim', claim)).ok).toBe(true);
+    const zones = await c.get('/api/admin/zones');
+    expect(zones.map((z: { name: string; connected: boolean; usable: boolean | null }) => [z.name, z.connected, z.usable])).toEqual([
+      ['example.com', false, false],
+      ['workspace.dev', true, null],
+    ]);
+  });
+
+  it('says so when the token can manage none of the domains', async () => {
+    fake.state.denied = [/^\/zones\/[^/]+\/dns_records/];
+    const c = new Client();
+    await c.init();
+    const status = await c.get('/api/setup/status');
+    expect(status.checks.zones.ok).toBe(false);
+    expect(status.checks.zones.message).toMatch(/can't manage any of the 2 domains/);
+    expect(status.permissions.find((p: { key: string }) => p.key === 'dns').ok).toBe(false);
+  });
+
   it('generates the recovery key when the deploy set none, and claims with it', async () => {
     // A fresh deploy: no ENCRYPTION_KEY and no CF_API_TOKEN secret.
     const c = new Client({ ENCRYPTION_KEY: undefined, CF_API_TOKEN: undefined });
