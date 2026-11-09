@@ -94,6 +94,10 @@ test('setup, send, receive, reply, search and isolate members', async ({ page, b
   await expect(page.getByText('_dmarc.example.com becomes')).toContainText('v=DMARC1; p=quarantine');
   await page.getByRole('button', { name: 'Enforce DMARC' }).click();
   await expect(page.getByText('DMARC is enforced')).toBeVisible();
+  // A logo can also come from an address; the server checks it first.
+  await page.getByRole('textbox', { name: 'Logo address' }).fill('http://example.com/logo.svg');
+  await page.getByRole('button', { name: 'Load' }).click();
+  await expect(page.getByText('Use an https:// address.')).toBeVisible();
   await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
 
   // 3. Add a member with their own inbox.

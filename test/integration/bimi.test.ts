@@ -84,6 +84,26 @@ describe('sender logo', () => {
     expect((await dup.json<{ error: { code: string } }>()).error.code).toBe('dmarc_duplicate');
   });
 
+  it('loads a logo from an address, checked like a file', async () => {
+    Object.assign(fake.state.logos, {
+      '/acme.svg': LOGO,
+      '/plain.svg': LOGO.replace('baseProfile="tiny-ps" ', ''),
+      '/big.svg': LOGO.replace('</svg>', `<desc>${'x'.repeat(40_000)}</desc></svg>`),
+    });
+    expect(await admin.post(`/api/admin/domains/${domainId}/logo/fetch`, { url: 'https://logos.test/acme.svg' })).toEqual({ svg: LOGO });
+    const refused = async (url: string) => {
+      const res = await admin.request('POST', `/api/admin/domains/${domainId}/logo/fetch`, { url });
+      expect(res.status).toBe(400);
+      return (await res.json<{ error: { code: string; message: string } }>()).error;
+    };
+    expect((await refused('http://logos.test/acme.svg')).message).toMatch(/https/);
+    expect((await refused('https://logos.test/missing.svg')).code).toBe('logo_unreachable');
+    expect((await refused('https://logos.test/plain.svg')).message).toMatch(/SVG Tiny PS/);
+    expect((await refused('https://logos.test/big.svg')).message).toMatch(/32 KB/);
+    // Only checked: nothing is stored until the dialog saves it.
+    expect((await admin.get(`/api/admin/domains/${domainId}/logo`)).logo).toBeNull();
+  });
+
   it('is for admins only', async () => {
     const boxes = await admin.get('/api/admin/mailboxes');
     const created = await admin.post('/api/admin/users', { name: 'Bob', role: 'member', newMailbox: { localPart: 'bob', domainId: boxes[0].domainId } });
@@ -93,6 +113,7 @@ describe('sender logo', () => {
     await bob.post('/api/account/password', { next: 'bobs new password 1' });
     expect(await bob.status('PUT', `/api/admin/domains/${domainId}/logo`, { svg: LOGO })).toBe(403);
     expect(await bob.status('POST', `/api/admin/domains/${domainId}/dmarc/enforce`, {})).toBe(403);
+    expect(await bob.status('POST', `/api/admin/domains/${domainId}/logo/fetch`, { url: 'https://logos.test/acme.svg' })).toBe(403);
     expect(await new Client().status('GET', `/api/admin/domains/${domainId}/logo`)).toBe(401);
   });
 });

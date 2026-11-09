@@ -6,8 +6,9 @@ import { first, run } from '../db/db';
 import type { Cloudflare } from '../cloudflare/client';
 import { applyActions, applyRecords, type DnsAction } from '../cloudflare/dns';
 import { unquoteTxt } from '../cloudflare/spf';
-import { badRequest, HttpError } from '../lib/errors';
-import { bimiRecord, checkBimiSvg, checkCertificate, dmarcEnforced, enforcedDmarc, isBimi } from '../mail/bimi';
+import { badRequest, errorMessage, HttpError } from '../lib/errors';
+import { BIMI_MAX_SVG, bimiRecord, checkBimiSvg, checkCertificate, dmarcEnforced, enforcedDmarc, isBimi } from '../mail/bimi';
+import { readLimited } from './sender-logos';
 import { getDomain, requireCf } from './domains';
 
 interface LogoRow {
@@ -52,6 +53,25 @@ export async function getSenderLogo(env: Env, settings: AppSettings, base: strin
     dmarc: { record: dmarcRecord, enforced: dmarcEnforced(dmarcRecord), fix: dmarcEnforced(dmarcRecord) ? null : enforcedDmarc(dmarcRecord) },
     https: base.startsWith('https://'),
   };
+}
+
+// A logo at an address, such as the brand's site, for the dialog to preview and then save like an
+// uploaded file. The server fetches it because most sites don't let a browser read them from
+// another origin. It is stored, not linked, so a change at that address can't break the logo.
+export async function fetchLogo(url: string): Promise<string> {
+  if (!url.startsWith('https://')) throw badRequest('Use an https:// address.', 'invalid_logo');
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { accept: 'image/svg+xml' }, signal: AbortSignal.timeout(8000) });
+  } catch (e) {
+    throw badRequest(`The logo could not be loaded: ${errorMessage(e)}`, 'logo_unreachable');
+  }
+  if (!res.ok) throw badRequest(`The logo could not be loaded (HTTP ${res.status}).`, 'logo_unreachable');
+  const svg = await readLimited(res, BIMI_MAX_SVG);
+  if (svg === null) throw badRequest('The logo is larger than 32 KB, the size mail apps accept.', 'invalid_logo');
+  const problem = checkBimiSvg(svg);
+  if (problem) throw badRequest(problem, 'invalid_logo');
+  return svg;
 }
 
 // Leaving out the logo or the certificate keeps the stored one; a null certificate removes it.

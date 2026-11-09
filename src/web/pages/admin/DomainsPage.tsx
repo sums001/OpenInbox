@@ -8,7 +8,7 @@ import { cn } from '../../lib/utils';
 import { PROVIDER_INFO } from '../../../shared/constants';
 import type { DomainInfo, DomainSetupStep, MailboxAdmin, ProviderInfo, SenderLogo, ZoneInspection } from '../../lib/types';
 import { Button, IconButton } from '../../components/ui/button';
-import { Checkbox, Field, Select } from '../../components/ui/form';
+import { Checkbox, Field, Input, Select } from '../../components/ui/form';
 import { Alert, Card, EmptyState, IconTile, PageHeader, PageSpinner } from '../../components/ui/misc';
 import { ConfirmDialog, Dialog, Menu, MenuItem } from '../../components/ui/overlay';
 
@@ -386,11 +386,23 @@ function SenderLogoDialog({ domain, onClose }: { domain: DomainInfo; onClose: ()
 
   useEffect(() => () => (svg ? URL.revokeObjectURL(svg.preview) : undefined), [svg]);
 
+  const takeSvg = (name: string, text: string) => setSvg({ name, text, preview: URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' })) });
   const pickSvg = async (f: File | undefined) => {
-    if (!f) return;
-    const text = await readFile(f);
-    setSvg({ name: f.name, text, preview: URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' })) });
+    if (f) takeSvg(f.name, await readFile(f));
   };
+  // A logo at an address: the server fetches and checks it; Save then stores it like a file.
+  const [logoUrl, setLogoUrl] = useState('');
+  const loadUrl = () =>
+    run('url', async () => {
+      setError('');
+      try {
+        const r = await post<{ svg: string }>(`/admin/domains/${domain.id}/logo/fetch`, { url: logoUrl.trim() });
+        takeSvg(logoUrl.trim(), r.svg);
+        setLogoUrl('');
+      } catch (e) {
+        setError(errorText(e));
+      }
+    });
   const save = () =>
     run('save', async () => {
       setError('');
@@ -443,6 +455,18 @@ function SenderLogoDialog({ domain, onClose }: { domain: DomainInfo; onClose: ()
             </Button>
             <input ref={svgInput} type="file" accept=".svg,image/svg+xml" className="hidden" onChange={(e) => pickSvg(e.target.files?.[0])} />
           </div>
+          <form
+            className="flex items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (logoUrl.trim()) loadUrl();
+            }}
+          >
+            <Input type="url" aria-label="Logo address" value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} placeholder="Or load it from an address: https://example.com/logo.svg" className="flex-1" />
+            <Button size="sm" type="submit" loading={busy === 'url'} disabled={!logoUrl.trim()}>
+              Load
+            </Button>
+          </form>
           <div className="flex items-center gap-3 rounded-lg border border-border px-3.5 py-2.5 text-[12.5px]">
             <span className="min-w-0 flex-1 text-muted">
               <b className="font-medium text-fg">Mark certificate</b> (optional): the .pem file of your VMC or CMC.
