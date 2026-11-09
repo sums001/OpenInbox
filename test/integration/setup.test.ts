@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { env } from 'cloudflare:test';
 import { useFakeApis } from '../helpers/fake';
 import { Client, ENCRYPTION_KEY, setupInstance } from '../helpers/client';
+import { totpCode } from '../../src/worker/lib/totp';
 
 describe('first-run setup', () => {
   let fake: ReturnType<typeof useFakeApis>;
@@ -57,6 +59,39 @@ describe('first-run setup', () => {
     const overview = await c.get('/api/admin/overview');
     expect(overview.checklist.find((x: { id: string }) => x.id === 'domain').done).toBe(true);
     expect(overview.checklist.find((x: { id: string }) => x.id === 'provider').done).toBe(false);
+  });
+
+  // Issue #12: Zone: Read on every zone, DNS and Email Routing only on the domains to use.
+  it('accepts a token limited to some of the domains', async () => {
+    fake.state.denied = [/^\/zones\/zone_example\//];
+    const c = new Client();
+    await c.init();
+    const status = await c.get('/api/setup/status');
+    expect(status.checks.zones).toMatchObject({ ok: true, count: 2, message: '1 of 2 domains can be used with this token.' });
+    expect(status.zones.map((z: { name: string; usable: boolean }) => [z.name, z.usable])).toEqual([
+      ['example.com', false],
+      ['workspace.dev', true],
+    ]);
+    // Zone permissions are probed on the domain the token covers, so none is reported missing.
+    expect(status.permissions.filter((p: { ok: boolean; optional: boolean }) => !p.ok && !p.optional)).toEqual([]);
+
+    const claim = { zoneId: 'zone_gmail', localPart: 'admin', displayName: 'Admin', password: 'correct horse battery', setupKey: ENCRYPTION_KEY, replaceMx: true };
+    expect((await c.post('/api/setup/claim', claim)).ok).toBe(true);
+    const zones = await c.get('/api/admin/zones');
+    expect(zones.map((z: { name: string; connected: boolean; usable: boolean | null }) => [z.name, z.connected, z.usable])).toEqual([
+      ['example.com', false, false],
+      ['workspace.dev', true, null],
+    ]);
+  });
+
+  it('says so when the token can manage none of the domains', async () => {
+    fake.state.denied = [/^\/zones\/[^/]+\/dns_records/];
+    const c = new Client();
+    await c.init();
+    const status = await c.get('/api/setup/status');
+    expect(status.checks.zones.ok).toBe(false);
+    expect(status.checks.zones.message).toMatch(/can't manage any of the 2 domains/);
+    expect(status.permissions.find((p: { key: string }) => p.key === 'dns').ok).toBe(false);
   });
 
   it('generates the recovery key when the deploy set none, and claims with it', async () => {
@@ -176,11 +211,75 @@ describe('first-run setup', () => {
     await c.post('/api/auth/logout');
     expect((await c.get('/api/auth/session')).user).toBeNull();
 
-    for (let i = 0; i < 6; i++) await c.status('POST', '/api/auth/login', { email: 'admin@example.com', password: 'wrong password!' });
-    expect(await c.status('POST', '/api/auth/login', { email: 'admin@example.com', password: 'correct horse battery' })).toBe(429);
+    // Wrong passwords from other addresses lock the account for new addresses, but not for one
+    // the owner has signed in from before.
+    const clearAttempts = () => env.DB.prepare('DELETE FROM auth_attempts').run();
+    const login = async (ip: string, password: string) => {
+      const res = await c.request('POST', '/api/auth/login', { email: 'admin@example.com', password }, { 'CF-Connecting-IP': ip });
+      await res.arrayBuffer();
+      return res.status;
+    };
+    expect(await login('198.51.100.7', 'correct horse battery')).toBe(200);
+    await c.post('/api/auth/logout');
+    for (let i = 0; i < 6; i++) expect(await login(`203.0.113.${i}`, 'wrong password!')).toBe(401);
+    expect(await login('203.0.113.99', 'correct horse battery')).toBe(429);
+    expect(await login('198.51.100.7', 'wrong password!')).toBe(401);
+    expect(await login('198.51.100.7', 'correct horse battery')).toBe(200);
+    // An IPv6 network counts as known as a whole: devices rotate the rest of the address.
+    await c.post('/api/auth/logout');
+    await clearAttempts();
+    expect(await login('2001:db8:1:2::7', 'correct horse battery')).toBe(200);
+    await c.post('/api/auth/logout');
+    for (let i = 0; i < 6; i++) await login(`203.0.113.${i}`, 'wrong password!');
+    expect(await login('2001:db8:1:3::1', 'correct horse battery')).toBe(429);
+    expect(await login('2001:db8:1:2:abcd:ef01:2345:6789', 'correct horse battery')).toBe(200);
+    await c.post('/api/auth/logout');
+    for (let i = 0; i < 6; i++) await login(`203.0.113.${i}`, 'wrong password!');
 
     expect(await c.status('POST', '/api/auth/recover', { email: 'admin@example.com', setupKey: 'nope', newPassword: 'another long password' })).toBe(403);
     await c.post('/api/auth/recover', { email: 'admin@example.com', setupKey: ENCRYPTION_KEY, newPassword: 'another long password' });
+    // Recovery lifts the account's lockout, also for a new address.
+    expect(await login('192.0.2.50', 'another long password')).toBe(200);
+  });
+  it('accepts each two-factor code once', async () => {
+    const c = new Client();
+    await setupInstance(c);
+    const { secret } = await c.post('/api/account/2fa/setup');
+    const setupCode = await totpCode(secret);
+    await c.post('/api/account/2fa/enable', { code: setupCode });
+    // Turning it on again can't reset the step or the recovery codes.
+    expect(await c.status('POST', '/api/account/2fa/enable', { code: await totpCode(secret, Date.now() + 30_000) })).toBe(400);
+    const signIn = async () => {
+      await c.post('/api/auth/logout');
+      expect((await c.post('/api/auth/login', { email: 'admin@example.com', password: 'correct horse battery' })).mfaRequired).toBe(true);
+    };
+
+    await signIn();
+    // The code that turned 2FA on counts as used.
+    expect(await c.status('POST', '/api/auth/2fa', { code: setupCode })).toBe(401);
+    const next = await totpCode(secret, Date.now() + 30_000);
+    await c.post('/api/auth/2fa', { code: next });
+    expect((await c.get('/api/auth/session')).user.mfaPending).toBe(false);
+
+    await signIn();
+    expect(await c.status('POST', '/api/auth/2fa', { code: next })).toBe(401);
+  });
+
+  it('accepts a recovery code once, also when two requests race', async () => {
+    const c = new Client();
+    await setupInstance(c);
+    const { secret } = await c.post('/api/account/2fa/setup');
+    const { recoveryCodes } = await c.post('/api/account/2fa/enable', { code: await totpCode(secret) });
+    const sessions = await Promise.all(
+      [0, 1].map(async () => {
+        const s = new Client();
+        await s.init();
+        await s.post('/api/auth/login', { email: 'admin@example.com', password: 'correct horse battery' });
+        return s;
+      }),
+    );
+    const codes = await Promise.all(sessions.map((s) => s.status('POST', '/api/auth/2fa', { code: recoveryCodes[0] })));
+    expect(codes.sort()).toEqual([200, 401]);
   });
 
   it('keeps the app address when other settings are saved', async () => {

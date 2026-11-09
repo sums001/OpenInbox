@@ -10,7 +10,7 @@ import type { Env } from '../env';
 import { loadSettings, saveSettings, type AppSettings } from '../db/settings';
 import { first } from '../db/db';
 import { CfError, Cloudflare, cfFromEnv, DEFAULT_CF_API } from '../cloudflare/client';
-import { checkPermissions, listZones, verifyToken, type PermissionCheck } from '../cloudflare/token';
+import { checkPermissions, listZones, verifyToken, zoneAccess, type PermissionCheck } from '../cloudflare/token';
 import { detectWorker, putWorkerSecret } from '../cloudflare/workers';
 import { decrypt, encrypt, hex, randomBytes } from '../lib/crypto';
 import { errorMessage, HttpError } from '../lib/errors';
@@ -36,7 +36,8 @@ export interface SetupStatus {
     zones: CheckResult & { count: number };
   };
   permissions: PermissionCheck[];
-  zones: { id: string; name: string; status: string }[];
+  // usable: whether the token can manage the zone (null: not checked).
+  zones: { id: string; name: string; status: string; usable: boolean | null }[];
 }
 
 export async function setupStatus(env: Env, host: string, refresh = false): Promise<SetupStatus> {
@@ -130,15 +131,27 @@ export async function setupStatus(env: Env, host: string, refresh = false): Prom
 
   let zones: SetupStatus['zones'] = [];
   try {
-    zones = (await listZones(cf, identity?.accountId)).map((z) => ({ id: z.id, name: z.name, status: z.status }));
-    checks.zones = zones.length
-      ? { ok: true, count: zones.length, message: `${zones.length} domain${zones.length === 1 ? '' : 's'} found.` }
-      : { ok: false, count: 0, message: 'No domains in this account. Add your domain to Cloudflare first, then reload.' };
+    const listed = await listZones(cf, identity?.accountId);
+    const access = await zoneAccess(cf, listed.map((z) => z.id));
+    zones = listed.map((z) => ({ id: z.id, name: z.name, status: z.status, usable: access.get(z.id) ?? null }));
+    const usable = zones.filter((z) => z.usable !== false).length;
+    const n = `${zones.length} domain${zones.length === 1 ? '' : 's'}`;
+    checks.zones = !zones.length
+      ? { ok: false, count: 0, message: 'No domains in this account. Add your domain to Cloudflare first, then reload.' }
+      : !usable
+        ? { ok: false, count: zones.length, message: `The token can't manage any of the ${n} it can see. Give it DNS: Edit and make sure its zone resources include the domains you want to use.` }
+        : usable < zones.length
+          ? { ok: true, count: zones.length, message: `${usable} of ${n} can be used with this token.` }
+          : { ok: true, count: zones.length, message: `${n} found.` };
   } catch (e) {
     checks.zones = { ok: false, count: 0, message: errorMessage(e) };
   }
 
-  const permissions = identity ? await checkPermissions(cf, identity.accountId, zones.find((z) => z.status === 'active')?.id ?? zones[0]?.id ?? null) : [];
+  // Zone permissions are probed on a zone the token can manage, so a token limited to some
+  // domains isn't reported as missing them.
+  const candidates = zones.some((z) => z.usable !== false) ? zones.filter((z) => z.usable !== false) : zones;
+  const probeZone = candidates.find((z) => z.status === 'active') ?? candidates[0];
+  const permissions = identity ? await checkPermissions(cf, identity.accountId, probeZone?.id ?? null) : [];
   return { setupComplete: !!settings.setupCompletedAt, checks, permissions, zones };
 }
 

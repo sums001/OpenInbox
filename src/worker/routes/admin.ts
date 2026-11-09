@@ -73,7 +73,7 @@ import { listSuppressions, removeSuppression } from '../services/webhooks';
 import { retryMessage } from '../services/send';
 import { deleteBlobs } from '../services/threads';
 import { Cloudflare, cfFromEnv, DEFAULT_CF_API } from '../cloudflare/client';
-import { checkPermissions, listZones, verifyToken } from '../cloudflare/token';
+import { checkPermissions, listZones, verifyToken, zoneAccess } from '../cloudflare/token';
 import { createDestination, deleteDestination, disableRule, listDestinations, listRules } from '../cloudflare/email-routing';
 import { R2S3Store, type R2Config } from '../storage/r2';
 import { detectWorker } from '../cloudflare/workers';
@@ -210,7 +210,8 @@ admin.get('/zones', async (c) => {
   const cf = await requireCf(c.env, settings);
   const zones = await listZones(cf, settings.cfAccountId);
   const taken = new Set((await all<{ name: string }>(c.env.DB, 'SELECT name FROM domains')).map((d) => d.name));
-  return c.json(zones.map((z) => ({ id: z.id, name: z.name, status: z.status, connected: taken.has(z.name) })));
+  const access = await zoneAccess(cf, zones.filter((z) => !taken.has(z.name)).map((z) => z.id));
+  return c.json(zones.map((z) => ({ id: z.id, name: z.name, status: z.status, connected: taken.has(z.name), usable: access.get(z.id) ?? null })));
 });
 
 admin.get('/zones/:zoneId', async (c) => {
