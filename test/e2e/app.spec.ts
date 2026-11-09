@@ -85,13 +85,19 @@ test('setup, send, receive, reply, search and isolate members', async ({ page, b
   await page.getByRole('button', { name: 'Done' }).click();
   await expect(page.getByText('Verified for sending')).toBeVisible();
 
-  // 3. Add a member with their own inbox.
+  // 3. Add a member with their own inbox. The dialog loads the domains itself: while they are on
+  // the way it must not submit without one.
+  await page.route('**/api/admin/domains', async (route) => {
+    await new Promise((r) => setTimeout(r, 1000));
+    await route.continue();
+  });
   await page.goto('/admin/users');
   await page.getByRole('button', { name: 'Add a user' }).click();
   await page.locator('#name').fill('Bob Member');
   await page.locator('#local').fill('bob');
   await page.getByRole('button', { name: 'Add user', exact: true }).click();
   await expect(page.getByText('Share these sign-in details')).toBeVisible();
+  await page.unroute('**/api/admin/domains');
   const bobPassword = (await page.getByRole('dialog').locator('.font-mono').textContent())!.trim();
   await page.getByRole('button', { name: 'Done' }).click();
   await expect(page.getByText('bob@example.com').first()).toBeVisible();

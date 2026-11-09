@@ -7,7 +7,8 @@ import { processQueue } from './services/send';
 import { wakeSnoozed } from './services/threads';
 import { retryUnparsed } from './services/inbound';
 import { reparseQueued } from './services/reparse';
-import { refreshPendingDomains } from './services/providers';
+import { refreshPendingDomains, upgradeWebhooks } from './services/providers';
+import { importProviderSent } from './services/provider-sent';
 import { cleanup, purgeOldTrash } from './services/retention';
 import { checkDomainHealth } from './services/domains';
 import { checkForUpdate } from './services/updates';
@@ -35,11 +36,14 @@ export async function handleScheduled(controller: ScheduledController, env: Env)
   }
   await safely('queue', () => processQueue(env));
   await safely('snooze', () => wakeSnoozed(env.DB));
+  // Mail other apps sent through a provider: up to 5 requests for the content.
+  await safely('provider-sent', () => importProviderSent(env));
   const minute = new Date(controller.scheduledTime).getUTCMinutes();
   if (minute % 10 === 0) {
     await safely('unparsed', () => retryUnparsed(env));
     await safely('reparse', () => reparseQueued(env));
     await safely('domains', () => refreshPendingDomains(env));
+    await safely('webhooks', () => upgradeWebhooks(env, settings));
   }
   // Up to 25 lookups, so on their own minute: they don't share the free plan's 50 subrequests
   // per invocation with the 10-minute jobs above.

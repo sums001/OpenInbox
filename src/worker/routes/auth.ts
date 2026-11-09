@@ -130,6 +130,8 @@ auth.post('/recover', async (c) => {
   // So the owner can sign in at once, from wherever they are.
   await clearFailures(c.env.DB, accountKey('login', owner.email));
   await c.env.DB.prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL, recovery_codes = NULL, status = ? WHERE id = ?').bind('active', owner.id).run();
+  // Recovery assumes the account may have been taken over: API keys made before it stop working.
+  await c.env.DB.prepare('DELETE FROM api_keys WHERE user_id = ?').bind(owner.id).run();
   await audit(c.env.DB, { userId: owner.id, action: 'auth.owner_recovered', ip });
   return c.json({ ok: true });
 });
