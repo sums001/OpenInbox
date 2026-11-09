@@ -96,6 +96,15 @@ test('setup, send, receive, reply, search and isolate members', async ({ page, b
   await page.getByRole('button', { name: 'Done' }).click();
   await expect(page.getByText('bob@example.com').first()).toBeVisible();
 
+  // A designed signature (#11): a table, a logo and a class styled from a <style> block.
+  await page.goto('/settings/signature');
+  await page.locator('textarea').first().fill(
+    '<style>.role { color: #667788; font-style: italic }</style><table cellpadding="0" cellspacing="0"><tr><td bgcolor="#f5f7fa" style="padding:8px"><img src="https://cdn.example.com/logo.png" width="48" height="48" alt="Acme logo" style="display:block"></td><td style="padding-left:12px"><b>Sam Owner</b><br><span class="role">Founder</span></td></tr></table>',
+  );
+  await expect(page.locator('.rounded-lg table').getByText('Founder')).toBeVisible();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByText('Saved')).toBeVisible();
+
   // 4. Receive mail, read it, reply.
   expect(await deliver(mail({ from: 'Maya Chen <maya@acme.test>', to: 'admin@example.com', subject: 'Q4 planning agenda', body: 'Can we meet Thursday about the budget?', id: 'q4-1@acme.test' }), 'maya@acme.test', 'admin@example.com')).toBe(200);
   expect(await deliver(mail({ from: 'Maya Chen <maya@acme.test>', to: 'bob@example.com', subject: 'For Bob only', body: 'Private note for Bob.', id: 'bob-1@acme.test' }), 'maya@acme.test', 'bob@example.com')).toBe(200);
@@ -107,7 +116,8 @@ test('setup, send, receive, reply, search and isolate members', async ({ page, b
   await page.getByText('Q4 planning agenda').click();
   await expect(page.getByText('Can we meet Thursday about the budget?')).toBeVisible();
   await page.getByRole('button', { name: 'Reply', exact: true }).last().click();
-  await page.locator('.ProseMirror').first().click();
+  await expect(page.locator('.ProseMirror table img[alt="Acme logo"]')).toBeVisible();
+  await page.locator('.ProseMirror p').first().click();
   await page.keyboard.type('Thursday works. See you then!');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   // Undo window, then it goes out.
@@ -118,6 +128,10 @@ test('setup, send, receive, reply, search and isolate members', async ({ page, b
   expect(sent.subject).toBe('Re: Q4 planning agenda');
   expect(sent.headers['In-Reply-To']).toBe('<q4-1@acme.test>');
   expect(sent.headers.References.split(' ').at(-1)).toBe(sent.headers['Message-ID']);
+  expect(sent.html).toMatch(/<table[^>]*>.*<td bgcolor="#f5f7fa"[^>]*><img src="https:\/\/cdn\.example\.com\/logo\.png"/s);
+  expect(sent.html).toMatch(/<span style="color: rgb\(102, 119, 136\); font-style: italic;?">Founder<\/span>/);
+  expect(sent.html.indexOf('Thursday works')).toBeLessThan(sent.html.indexOf('data-oi-signature'));
+  expect(sent.html.indexOf('data-oi-signature')).toBeLessThan(sent.html.indexOf('<blockquote'));
 
   // 5. The recipient replies (SES replaced our Message-ID; References still carries it).
   await deliver(

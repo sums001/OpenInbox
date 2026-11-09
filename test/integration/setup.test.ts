@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { env } from 'cloudflare:test';
 import { useFakeApis } from '../helpers/fake';
 import { Client, ENCRYPTION_KEY, setupInstance } from '../helpers/client';
+import { totpCode } from '../../src/worker/lib/totp';
 
 describe('first-run setup', () => {
   let fake: ReturnType<typeof useFakeApis>;
@@ -176,10 +178,74 @@ describe('first-run setup', () => {
     await c.post('/api/auth/logout');
     expect((await c.get('/api/auth/session')).user).toBeNull();
 
-    for (let i = 0; i < 6; i++) await c.status('POST', '/api/auth/login', { email: 'admin@example.com', password: 'wrong password!' });
-    expect(await c.status('POST', '/api/auth/login', { email: 'admin@example.com', password: 'correct horse battery' })).toBe(429);
+    // Wrong passwords from other addresses lock the account for new addresses, but not for one
+    // the owner has signed in from before.
+    const clearAttempts = () => env.DB.prepare('DELETE FROM auth_attempts').run();
+    const login = async (ip: string, password: string) => {
+      const res = await c.request('POST', '/api/auth/login', { email: 'admin@example.com', password }, { 'CF-Connecting-IP': ip });
+      await res.arrayBuffer();
+      return res.status;
+    };
+    expect(await login('198.51.100.7', 'correct horse battery')).toBe(200);
+    await c.post('/api/auth/logout');
+    for (let i = 0; i < 6; i++) expect(await login(`203.0.113.${i}`, 'wrong password!')).toBe(401);
+    expect(await login('203.0.113.99', 'correct horse battery')).toBe(429);
+    expect(await login('198.51.100.7', 'wrong password!')).toBe(401);
+    expect(await login('198.51.100.7', 'correct horse battery')).toBe(200);
+    // An IPv6 network counts as known as a whole: devices rotate the rest of the address.
+    await c.post('/api/auth/logout');
+    await clearAttempts();
+    expect(await login('2001:db8:1:2::7', 'correct horse battery')).toBe(200);
+    await c.post('/api/auth/logout');
+    for (let i = 0; i < 6; i++) await login(`203.0.113.${i}`, 'wrong password!');
+    expect(await login('2001:db8:1:3::1', 'correct horse battery')).toBe(429);
+    expect(await login('2001:db8:1:2:abcd:ef01:2345:6789', 'correct horse battery')).toBe(200);
+    await c.post('/api/auth/logout');
+    for (let i = 0; i < 6; i++) await login(`203.0.113.${i}`, 'wrong password!');
 
     expect(await c.status('POST', '/api/auth/recover', { email: 'admin@example.com', setupKey: 'nope', newPassword: 'another long password' })).toBe(403);
     await c.post('/api/auth/recover', { email: 'admin@example.com', setupKey: ENCRYPTION_KEY, newPassword: 'another long password' });
+    // Recovery lifts the account's lockout, also for a new address.
+    expect(await login('192.0.2.50', 'another long password')).toBe(200);
+  });
+  it('accepts each two-factor code once', async () => {
+    const c = new Client();
+    await setupInstance(c);
+    const { secret } = await c.post('/api/account/2fa/setup');
+    const setupCode = await totpCode(secret);
+    await c.post('/api/account/2fa/enable', { code: setupCode });
+    // Turning it on again can't reset the step or the recovery codes.
+    expect(await c.status('POST', '/api/account/2fa/enable', { code: await totpCode(secret, Date.now() + 30_000) })).toBe(400);
+    const signIn = async () => {
+      await c.post('/api/auth/logout');
+      expect((await c.post('/api/auth/login', { email: 'admin@example.com', password: 'correct horse battery' })).mfaRequired).toBe(true);
+    };
+
+    await signIn();
+    // The code that turned 2FA on counts as used.
+    expect(await c.status('POST', '/api/auth/2fa', { code: setupCode })).toBe(401);
+    const next = await totpCode(secret, Date.now() + 30_000);
+    await c.post('/api/auth/2fa', { code: next });
+    expect((await c.get('/api/auth/session')).user.mfaPending).toBe(false);
+
+    await signIn();
+    expect(await c.status('POST', '/api/auth/2fa', { code: next })).toBe(401);
+  });
+
+  it('accepts a recovery code once, also when two requests race', async () => {
+    const c = new Client();
+    await setupInstance(c);
+    const { secret } = await c.post('/api/account/2fa/setup');
+    const { recoveryCodes } = await c.post('/api/account/2fa/enable', { code: await totpCode(secret) });
+    const sessions = await Promise.all(
+      [0, 1].map(async () => {
+        const s = new Client();
+        await s.init();
+        await s.post('/api/auth/login', { email: 'admin@example.com', password: 'correct horse battery' });
+        return s;
+      }),
+    );
+    const codes = await Promise.all(sessions.map((s) => s.status('POST', '/api/auth/2fa', { code: recoveryCodes[0] })));
+    expect(codes.sort()).toEqual([200, 401]);
   });
 });

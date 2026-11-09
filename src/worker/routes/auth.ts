@@ -6,11 +6,11 @@ import { loginSchema, recoverSchema, totpSchema } from '../../shared/schemas';
 import { isSetupComplete, loadSettings } from '../db/settings';
 import { first } from '../db/db';
 import { createSession, destroySession, ensureCsrfCookie } from '../auth/session';
-import { accountKey, assertNotLimited, clearFailures, clientIpKey, KEY_CHECK_PER_IP, LOGIN_PER_ACCOUNT, LOGIN_PER_IP, recordFailure } from '../auth/rate-limit';
+import { accountKey, assertNotLimited, clearFailures, clientIpKey, KEY_CHECK_PER_IP, knownLogin, limitedError, limitedFor, LOGIN_PER_ACCOUNT, LOGIN_PER_IP, recordFailure, rememberLogin } from '../auth/rate-limit';
 import { clientIp } from '../auth/middleware';
 import { DUMMY_HASH, verifyPassword } from '../lib/password';
 import { decrypt, safeEqual } from '../lib/crypto';
-import { hashRecoveryCode, verifyTotp } from '../lib/totp';
+import { hashRecoveryCode, matchTotpStep } from '../lib/totp';
 import { HttpError, unauthorized } from '../lib/errors';
 import { parseJson } from '../lib/json';
 import { changePassword, invalidLogin, ownerUser, touchLogin, type UserRow } from '../services/users';
@@ -38,8 +38,17 @@ auth.post('/login', async (c) => {
   const { email, password } = await body(c, loginSchema);
   const ip = clientIp(c);
   await assertNotLimited(c.env.DB, clientIpKey('login', ip), LOGIN_PER_IP);
-  await assertNotLimited(c.env.DB, accountKey('login', email), LOGIN_PER_ACCOUNT);
   const user = await first<UserRow>(c.env.DB, 'SELECT * FROM users WHERE email = ?', email.trim().toLowerCase());
+  // The per-account limit stops one password being guessed from many addresses. Networks that
+  // have completed a sign-in to the account before are exempt (they still have the per-IP limit),
+  // or anyone who knows the address could keep its owner locked out with a few wrong passwords.
+  // The lookup runs for unknown addresses too, so timing doesn't tell which accounts exist, and a
+  // refusal counts against the per-IP limit.
+  const accountWait = await limitedFor(c.env.DB, accountKey('login', email), LOGIN_PER_ACCOUNT);
+  if (accountWait !== null && !(await knownLogin(c.env.DB, user?.id ?? 0, ip))) {
+    await recordFailure(c.env.DB, clientIpKey('login', ip), LOGIN_PER_IP);
+    throw limitedError(accountWait);
+  }
   const ok = await verifyPassword(password, user?.password_hash ?? DUMMY_HASH);
   if (!user || !ok || user.status !== 'active') {
     await recordFailure(c.env.DB, clientIpKey('login', ip), LOGIN_PER_IP);
@@ -52,6 +61,7 @@ auth.post('/login', async (c) => {
   await createSession(c, user.id, mfa);
   if (!mfa) {
     await touchLogin(c.env.DB, user.id);
+    await rememberLogin(c.env.DB, user.id, ip);
     await audit(c.env.DB, { userId: user.id, action: 'auth.login', ip });
   }
   return c.json({ ok: true, mfaRequired: mfa, mustChangePassword: !!user.must_change_password });
@@ -66,14 +76,25 @@ auth.post('/2fa', async (c) => {
   await assertNotLimited(c.env.DB, accountKey('2fa', user.email), LOGIN_PER_ACCOUNT);
   const row = await first<UserRow>(c.env.DB, 'SELECT * FROM users WHERE id = ?', user.id);
   let ok = false;
-  if (row?.totp_secret) ok = await verifyTotp(await decrypt(c.env, row.totp_secret), code);
+  if (row?.totp_secret) {
+    const step = await matchTotpStep(await decrypt(c.env, row.totp_secret), code);
+    // Only a step later than the last accepted one; the conditional update also settles two
+    // requests racing with the same code.
+    if (step !== null) {
+      const res = await c.env.DB.prepare('UPDATE users SET totp_last_step = ? WHERE id = ? AND totp_last_step < ?').bind(step, user.id, step).run();
+      ok = res.meta.changes > 0;
+    }
+  }
   if (!ok && row?.recovery_codes) {
-    // A recovery code works once.
+    // A recovery code works once: the update only applies to the list as read, so of two
+    // requests racing with codes, one wins and the other is refused (and can be tried again).
     const hashes = parseJson<string[]>(row.recovery_codes, []);
     const h = await hashRecoveryCode(code);
     if (hashes.includes(h)) {
-      ok = true;
-      await c.env.DB.prepare('UPDATE users SET recovery_codes = ? WHERE id = ?').bind(JSON.stringify(hashes.filter((x) => x !== h)), user.id).run();
+      const used = await c.env.DB.prepare('UPDATE users SET recovery_codes = ? WHERE id = ? AND recovery_codes = ?')
+        .bind(JSON.stringify(hashes.filter((x) => x !== h)), user.id, row.recovery_codes)
+        .run();
+      ok = used.meta.changes > 0;
     }
   }
   if (!ok) {
@@ -83,6 +104,7 @@ auth.post('/2fa', async (c) => {
   await clearFailures(c.env.DB, accountKey('2fa', user.email));
   await c.env.DB.prepare('UPDATE sessions SET mfa_pending = 0 WHERE id = ?').bind(session.id).run();
   await touchLogin(c.env.DB, user.id);
+  await rememberLogin(c.env.DB, user.id, ip);
   await audit(c.env.DB, { userId: user.id, action: 'auth.login', details: { mfa: true }, ip });
   return c.json({ ok: true });
 });
@@ -105,6 +127,8 @@ auth.post('/recover', async (c) => {
     throw new HttpError(403, 'recover_failed', 'The owner email or recovery key is wrong.');
   }
   await changePassword(c.env.DB, owner.id, newPassword);
+  // So the owner can sign in at once, from wherever they are.
+  await clearFailures(c.env.DB, accountKey('login', owner.email));
   await c.env.DB.prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL, recovery_codes = NULL, status = ? WHERE id = ?').bind('active', owner.id).run();
   await audit(c.env.DB, { userId: owner.id, action: 'auth.owner_recovered', ip });
   return c.json({ ok: true });
