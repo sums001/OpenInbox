@@ -23,6 +23,7 @@ export interface UserRow {
   must_change_password: number;
   totp_secret: string | null;
   totp_enabled: number;
+  totp_last_step: number;
   recovery_codes: string | null;
   preferences: string;
   created_at: number;

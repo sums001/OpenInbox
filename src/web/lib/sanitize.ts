@@ -3,6 +3,7 @@
 // remote loads (tracking pixels, fonts, CSS) until the user allows images.
 import DOMPurify from 'dompurify';
 import type { Attachment } from './types';
+import { cleanSignatureStyle, isSafeSignatureUrl, SIGNATURE_ATTRS, SIGNATURE_DROP_WITH_CONTENT, SIGNATURE_TAGS } from '../../shared/signature';
 
 export interface SanitizedMail {
   html: string;
@@ -154,12 +155,66 @@ img[data-oi-blocked]{display:none}
 </style></head><body>${body}</body></html>`;
 }
 
-// Plain text to safe HTML with links, quoted lines dimmed.
-export function textToSafeHtml(text: string): string {
-  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return esc(text)
-    .replace(/\b(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>')
-    .replace(/(^|\s)([\w.+-]+@[\w-]+\.[\w.-]+)/g, '$1<a href="mailto:$2">$2</a>');
+// Signature generators often style with a <style> block and classes, which the allowlist drops
+// (as many mail apps do). Their rules are copied onto the elements as inline styles first, in
+// source order and before the element's own style, and then go through the same allowlist.
+function inlineStyleBlocks(html: string): string {
+  if (!/<style[\s>]/i.test(html)) return html;
+  const t = document.createElement('template');
+  t.innerHTML = html;
+  const styles = new Map<Element, string[]>();
+  for (const block of t.content.querySelectorAll('style')) {
+    let rules: CSSRule[];
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(block.textContent ?? '');
+      rules = [...sheet.cssRules];
+    } catch {
+      continue;
+    }
+    for (const rule of rules) {
+      if (!(rule instanceof CSSStyleRule)) continue;
+      let targets: NodeListOf<Element>;
+      try {
+        targets = t.content.querySelectorAll(rule.selectorText);
+      } catch {
+        continue;
+      }
+      for (const el of targets) styles.set(el, [...(styles.get(el) ?? []), rule.style.cssText]);
+    }
+  }
+  for (const [el, rules] of styles) el.setAttribute('style', [...rules, el.getAttribute('style') ?? ''].join(' ').trim());
+  return t.innerHTML;
+}
+
+// A mailbox signature (plain text or HTML) as safe HTML. Used on preview, save and send, so a
+// signature stored before this cleaning existed is cleaned too. The Worker cleans it again on
+// save with the same allowlist.
+export function cleanSignature(raw: string): string {
+  const looksHtml = /<\/?[a-z][\s\S]*>/i.test(raw);
+  const html = looksHtml ? inlineStyleBlocks(raw) : raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>');
+  DOMPurify.addHook('uponSanitizeAttribute', (_node, data) => {
+    if (data.attrName === 'style') {
+      data.attrValue = cleanSignatureStyle(data.attrValue);
+      if (!data.attrValue) data.keepAttr = false;
+    } else if ((data.attrName === 'href' || data.attrName === 'src') && !isSafeSignatureUrl(data.attrName, data.attrValue)) data.keepAttr = false;
+  });
+  DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+    const el = node as Element;
+    if (el.tagName === 'A') {
+      el.setAttribute('target', '_blank');
+      el.setAttribute('rel', 'noopener noreferrer');
+    }
+  });
+  const clean = DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: SIGNATURE_TAGS,
+    ALLOWED_ATTR: SIGNATURE_ATTRS,
+    ADD_FORBID_CONTENTS: SIGNATURE_DROP_WITH_CONTENT,
+    ALLOW_DATA_ATTR: false,
+  });
+  DOMPurify.removeHook('afterSanitizeAttributes');
+  DOMPurify.removeHook('uponSanitizeAttribute');
+  return clean;
 }
 
 // Splits plain text into the new part and the quoted history (lines starting with ">", or an

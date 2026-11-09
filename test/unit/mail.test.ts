@@ -4,6 +4,8 @@ import { decodeParam, decodeWords, parseStructured } from '../../src/worker/mail
 import { parseAddressList, stripPlusTag } from '../../src/worker/mail/address';
 import { htmlToText, makeSnippet } from '../../src/worker/mail/html';
 import { applyTracking, classifyHit } from '../../src/worker/mail/tracking';
+import { sanitizeSignature } from '../../src/worker/mail/signature';
+import { textToSafeHtml } from '../../src/web/lib/linkify';
 import { buildMime, encodeQuotedPrintable } from '../../src/worker/mail/mime';
 import { buildReferences, normalizeSubject, parseIdList } from '../../src/worker/mail/threading';
 import { authSpamReason, parseAuthResults } from '../../src/worker/mail/auth-results';
@@ -94,6 +96,95 @@ JVBERi0xLjQK
     expect(s.text).toBe('Just text.\n');
     expect(s.attachments).toHaveLength(0);
   });
+  it('reads text parts with a Content-ID as the body', () => {
+    // Bulk senders give body parts an ID, and multipart/related names its HTML root with one.
+    const s = scan(
+      eml(`Subject: Welcome
+Content-Type: multipart/related; boundary="rel"; type="multipart/alternative"
+
+--rel
+Content-Type: multipart/alternative; boundary="alt"
+
+--alt
+Content-Type: text/plain; charset=utf-8
+Content-ID: <text@mj>
+Content-Transfer-Encoding: quoted-printable
+
+Welcome to the team
+--alt
+Content-Type: text/html; charset=utf-8
+Content-ID: <html@mj>
+Content-Disposition: inline
+
+<p>Welcome <img src="cid:logo@mj"></p>
+--alt--
+--rel
+Content-Type: image/png
+Content-ID: <logo@mj>
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgo=
+--rel--
+`),
+    );
+    expect(s.text).toBe('Welcome to the team');
+    expect(s.html).toBe('<p>Welcome <img src="cid:logo@mj"></p>');
+    expect(s.attachments.map((a) => [a.contentType, a.contentId])).toEqual([['image/png', 'logo@mj']]);
+  });
+
+  it('shows unnamed text parts filed as attachments as the body when there is no other', () => {
+    const s = scan(
+      eml(`Subject: Odd sender
+Content-Type: multipart/alternative; boundary="alt"
+
+--alt
+Content-Type: text/plain; charset=utf-8
+Content-Disposition: attachment
+
+Plain version
+--alt
+Content-Type: text/html; charset=iso-8859-1
+Content-Disposition: attachment
+Content-Transfer-Encoding: quoted-printable
+
+<p>Caf=E9</p>
+--alt--
+`),
+    );
+    expect(s.text).toBe('Plain version');
+    expect(s.html).toBe('<p>Café</p>');
+    expect(s.attachments).toHaveLength(0);
+  });
+
+  it('keeps named or extra text attachments as files', () => {
+    const s = scan(
+      eml(`Subject: Notes
+Content-Type: multipart/mixed; boundary="mix"
+
+--mix
+Content-Type: text/plain
+
+See attached.
+--mix
+Content-Type: text/plain; name="notes.txt"
+Content-Disposition: attachment; filename="notes.txt"
+
+my notes
+--mix
+Content-Type: text/html
+Content-Disposition: attachment
+
+<p>saved page</p>
+--mix--
+`),
+    );
+    expect(s.text).toBe('See attached.');
+    expect(s.html).toBeNull();
+    expect(s.attachments.map((a) => [a.filename, a.contentType])).toEqual([
+      ['notes.txt', 'text/plain'],
+      [null, 'text/html'],
+    ]);
+  });
 });
 
 describe('addresses', () => {
@@ -180,6 +271,67 @@ describe('tracking', () => {
     expect(classifyHit({ ...base, kind: 'click', userAgent: chrome, method: 'HEAD' })).toBe('scanner');
     expect(classifyHit({ ...base, kind: 'click', userAgent: chrome, msSinceSent: 2_000 })).toBe('scanner');
     expect(classifyHit({ ...base, kind: 'click', userAgent: chrome })).toBe('human');
+  });
+});
+
+describe('plain-text linkifier', () => {
+  it('cannot break out of the href (issue #3)', () => {
+    expect(textToSafeHtml('https://evil.example/"style="position:fixed;inset:0"x')).toBe(
+      '<a href="https://evil.example/" target="_blank" rel="noopener noreferrer">https://evil.example/</a>&quot;style=&quot;position:fixed;inset:0&quot;x',
+    );
+  });
+
+  it('links URLs and addresses and escapes the rest', () => {
+    expect(textToSafeHtml(`See <https://a.example/x?q=1&b=2>, it's "fine". Mail ann@b.example`)).toBe(
+      'See &lt;<a href="https://a.example/x?q=1&amp;b=2" target="_blank" rel="noopener noreferrer">https://a.example/x?q=1&amp;b=2</a>&gt;, it&#39;s &quot;fine&quot;. Mail <a href="mailto:ann@b.example">ann@b.example</a>',
+    );
+  });
+});
+
+describe('signature sanitizer', () => {
+  it('keeps simple formatting and safe links', async () => {
+    expect(await sanitizeSignature('<p><b>Ann</b> <a href="https://example.com" style="color: red; position: fixed">site</a></p>')).toBe(
+      '<p><b>Ann</b> <a href="https://example.com" style="color: red" target="_blank" rel="noopener noreferrer">site</a></p>',
+    );
+  });
+
+  it('removes the bypasses from issue #4', async () => {
+    const out = await sanitizeSignature(
+      '<svg/onload=alert(1)>x</svg><img src=x/onerror=alert(1)><a href=javascript:alert(1)>a</a><link rel=stylesheet href=//e.test><meta http-equiv=refresh content=0><base href=//e.test>ok<style>body{display:none}',
+    );
+    expect(out).toBe('<img><a target="_blank" rel="noopener noreferrer">a</a>ok');
+  });
+
+  it('is not fooled by character references or duplicate attributes', async () => {
+    expect(await sanitizeSignature('<span style="border-image:u&#114l(https://e.test/t.png) 30;color:red">x</span>')).toBe('<span style="color:red">x</span>');
+    expect(await sanitizeSignature('<span style="color:red&#59;position:fixed">x</span>')).toBe('<span>x</span>');
+    expect(await sanitizeSignature('<span style="color:red" style="border-image:url(x)">x</span>')).toBe('<span style="color:red">x</span>');
+    expect(await sanitizeSignature('<a href="https://ok.test/?a=1&amp;b=2" href="javascript:alert(1)">a</a>')).toBe(
+      '<a href="https://ok.test/?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">a</a>',
+    );
+  });
+
+  it('drops url() and positioning from styles', async () => {
+    expect(await sanitizeSignature('<span style="background:url(//e.test/t.gif);z-index:9;font-size:12px">x</span>')).toBe('<span style="font-size:12px">x</span>');
+    expect(await sanitizeSignature('<span style="background:image(\'t.png\');display:block;position:absolute">x</span>')).toBe('<span style="display:block">x</span>');
+  });
+
+  // Issue #11: the table layout signature generators produce.
+  it('keeps a designed signature', async () => {
+    const sig =
+      '<table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;font-family:Arial,sans-serif">' +
+      '<tr><td width="80" valign="top" style="padding-right:12px;border-right:2px solid #0b5fff">' +
+      '<img src="https://cdn.example.com/logo.png" width="64" height="64" alt="Acme" style="display:block;border-radius:8px"></td>' +
+      '<td bgcolor="#f5f7fa" style="padding-left:12px;background:#f5f7fa;line-height:1.4">' +
+      '<b style="font-size:15px;color:#111">Ann Lee</b><br><span style="color:#667">Head of Sales</span><br>' +
+      '<a href="tel:+15550100" style="color:#0b5fff;text-decoration:none">+1 555 0100</a> ' +
+      '<a href="https://acme.example"><img src="https://cdn.example.com/in.png" width="16" height="16" alt="LinkedIn" style="display:inline-block;vertical-align:middle"></a>' +
+      '</td></tr></table>';
+    const out = await sanitizeSignature(sig);
+    expect(out.match(/<\/?[a-z]+/g)).toEqual(sig.match(/<\/?[a-z]+/g));
+    for (const kept of ['cellpadding="0"', 'border-collapse:collapse', 'bgcolor="#f5f7fa"', 'background:#f5f7fa', 'display:block', 'display:inline-block', 'border-radius:8px', 'src="https://cdn.example.com/logo.png"', 'href="tel:+15550100"']) {
+      expect(out).toContain(kept);
+    }
   });
 });
 

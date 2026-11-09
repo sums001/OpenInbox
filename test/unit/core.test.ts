@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mergeSpf, spfLookupCount, unquoteTxt } from '../../src/worker/cloudflare/spf';
 import { planRecords, quoteTxt, type CfDnsRecord } from '../../src/worker/cloudflare/dns';
 import { base32Decode, base32Encode, totpCode, verifyTotp } from '../../src/worker/lib/totp';
+import { loginNetwork } from '../../src/worker/auth/rate-limit';
 import { decrypt, encrypt } from '../../src/worker/lib/crypto';
 import { hashPassword, verifyPassword } from '../../src/worker/lib/password';
 import { dotStuff, SmtpAdapter } from '../../src/worker/providers/smtp';
@@ -88,6 +89,18 @@ describe('crypto', () => {
     expect(await totpCode(secret, 59_000)).toBe('287082');
     expect(await verifyTotp(secret, '287082', 59_000)).toBe(true);
     expect(await verifyTotp(secret, '000000', 59_000)).toBe(false);
+  });
+});
+
+describe('login networks', () => {
+  it('keeps IPv4 addresses and the /64 of IPv6 ones', () => {
+    expect(loginNetwork('198.51.100.7')).toBe('198.51.100.7');
+    expect(loginNetwork('::ffff:198.51.100.7')).toBe('198.51.100.7');
+    expect(loginNetwork('2001:db8:1:2::7')).toBe('2001:db8:1:2::/64');
+    expect(loginNetwork('2001:0DB8:0001:0002:abcd:ef01:2345:6789')).toBe('2001:db8:1:2::/64');
+    expect(loginNetwork('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(loginNetwork('unknown')).toBeNull();
+    expect(loginNetwork('1::2::3')).toBe('1::2::3');
   });
 });
 
