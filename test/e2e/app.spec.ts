@@ -85,13 +85,19 @@ test('setup, send, receive, reply, search and isolate members', async ({ page, b
   await page.getByRole('button', { name: 'Done' }).click();
   await expect(page.getByText('Verified for sending')).toBeVisible();
 
-  // 3. Add a member with their own inbox.
+  // 3. Add a member with their own inbox. The dialog loads the domains itself: while they are on
+  // the way it must not submit without one.
+  await page.route('**/api/admin/domains', async (route) => {
+    await new Promise((r) => setTimeout(r, 1000));
+    await route.continue();
+  });
   await page.goto('/admin/users');
   await page.getByRole('button', { name: 'Add a user' }).click();
   await page.locator('#name').fill('Bob Member');
   await page.locator('#local').fill('bob');
   await page.getByRole('button', { name: 'Add user', exact: true }).click();
   await expect(page.getByText('Share these sign-in details')).toBeVisible();
+  await page.unroute('**/api/admin/domains');
   const bobPassword = (await page.getByRole('dialog').locator('.font-mono').textContent())!.trim();
   await page.getByRole('button', { name: 'Done' }).click();
   await expect(page.getByText('bob@example.com').first()).toBeVisible();
@@ -132,6 +138,10 @@ test('setup, send, receive, reply, search and isolate members', async ({ page, b
   expect(sent.html).toMatch(/<span style="color: rgb\(102, 119, 136\); font-style: italic;?">Founder<\/span>/);
   expect(sent.html.indexOf('Thursday works')).toBeLessThan(sent.html.indexOf('data-oi-signature'));
   expect(sent.html.indexOf('data-oi-signature')).toBeLessThan(sent.html.indexOf('<blockquote'));
+  // The Sent list says what became of it: sent, with no delivery report yet.
+  await page.goto('/mail/all/sent');
+  await expect(page.locator('li').filter({ hasText: 'Q4 planning agenda' }).getByText('Sent', { exact: true })).toBeVisible();
+  await page.getByText('Q4 planning agenda').click();
 
   // 5. The recipient replies (SES replaced our Message-ID; References still carries it).
   await deliver(

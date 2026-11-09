@@ -281,4 +281,13 @@ describe('first-run setup', () => {
     const codes = await Promise.all(sessions.map((s) => s.status('POST', '/api/auth/2fa', { code: recoveryCodes[0] })));
     expect(codes.sort()).toEqual([200, 401]);
   });
+
+  it('keeps the app address when other settings are saved', async () => {
+    const c = new Client();
+    await setupInstance(c);
+    const before = (await c.get('/api/admin/settings')).appUrl;
+    expect(before).toBeTruthy();
+    await c.patch('/api/admin/settings', { instanceName: 'Acme Mail' });
+    expect(await c.get('/api/admin/settings')).toMatchObject({ instanceName: 'Acme Mail', appUrl: before });
+  });
 });

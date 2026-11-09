@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlarmClock, Archive, CalendarClock, Check, ChevronDown, CircleCheck, Clock, Inbox, LoaderCircle, Mail, MailOpen, Menu as MenuIcon, OctagonAlert, Paperclip, RefreshCw, Search, SearchX, SquarePen, Star, Trash2, X } from 'lucide-react';
 import { listDate } from '../../lib/format';
-import { ownAddresses, participantLabel, snoozePresets, VIEW_LABELS } from '../../lib/mail';
+import { ownAddresses, participantLabel, sentStatus, snoozePresets, VIEW_LABELS } from '../../lib/mail';
 import { cn, storageGet, storageSet } from '../../lib/utils';
 import type { Mailbox, ThreadSummary } from '../../lib/types';
 import { Button, IconButton } from '../../components/ui/button';
 import { Tick } from '../../components/ui/form';
-import { Avatar, Kbd, Skeleton } from '../../components/ui/misc';
+import { Avatar, Badge, Kbd, Skeleton } from '../../components/ui/misc';
 import { ConfirmDialog, Menu, MenuItem, MenuLabel, MenuSeparator, useToast } from '../../components/ui/overlay';
 import { labelChip } from './labels';
 import { PickTimeDialog } from './PickTimeDialog';
@@ -350,6 +350,7 @@ export function ThreadList({
               const isSelected = selected.has(t.id);
               const participants = view === 'sent' || view === 'drafts' ? participantLabel(t.participants, new Set()) : participantLabel(t.participants, own);
               const first = t.participants.find((p) => !own.has(p.address.toLowerCase())) ?? t.participants[0];
+              const sent = view === 'sent' && t.sent ? sentStatus(t.sent.status, t.sent.opened) : null;
               const strong = unread || active;
               return (
                 <li
@@ -417,6 +418,11 @@ export function ThreadList({
                     </div>
                     <div className={cn('truncate text-[13.5px] leading-[19px] md:text-[13px]', unread ? 'font-semibold' : 'font-[450]', strong ? 'text-fg' : 'text-muted')}>{t.subject || '(no subject)'}</div>
                     <div className="flex min-w-0 items-center gap-[5px] text-[13px] leading-[19px]">
+                      {sent && (
+                        <Badge size="sm" tone={sent.tone} className="shrink-0">
+                          {sent.label}
+                        </Badge>
+                      )}
                       {t.labels.slice(0, 3).map((id) => {
                         const l = labelsById.get(id);
                         return l ? (

@@ -6,7 +6,6 @@ import {
   ArrowLeft,
   Ban,
   CalendarClock,
-  CheckCheck,
   ChevronDown,
   ChevronUp,
   CircleX,
@@ -27,6 +26,7 @@ import {
   OctagonAlert,
   Paperclip as PaperclipIcon,
   Pencil,
+  Radar,
   Reply,
   ReplyAll,
   RotateCw,
@@ -41,16 +41,16 @@ import {
 } from 'lucide-react';
 import { del, get, post, errorText } from '../../lib/api';
 import { bytes, displayName, formatAddress, fullDate, listDate, timeAgo } from '../../lib/format';
-import { forwardHtml, ownAddresses, quoteHtml, replyFrom, replyRecipients, snoozePresets } from '../../lib/mail';
+import { forwardHtml, ownAddresses, quoteHtml, replyFrom, replyRecipients, sentStatus, snoozePresets } from '../../lib/mail';
 import { splitQuoted } from '../../lib/sanitize';
 import { textToSafeHtml } from '../../lib/linkify';
 import { useSession, useUser } from '../../lib/session';
 import { cn, storageGet } from '../../lib/utils';
-import type { Attachment, Mailbox, Message, ThreadDetail } from '../../lib/types';
+import type { Attachment, Mailbox, Message, ThreadDetail, TrackingEvent, TrackingSummary } from '../../lib/types';
 import { labelChip, labelDot } from './labels';
 import { Button, IconButton } from '../../components/ui/button';
 import { Avatar, Badge, PageSpinner } from '../../components/ui/misc';
-import { ConfirmDialog, Menu, MenuItem, MenuLabel, MenuSeparator, useToast } from '../../components/ui/overlay';
+import { ConfirmDialog, Dialog, Menu, MenuItem, MenuLabel, MenuSeparator, useToast } from '../../components/ui/overlay';
 import { Textarea } from '../../components/ui/form';
 import { Tooltip } from '../../components/ui/tooltip';
 import { MailFrame } from './MailFrame';
@@ -584,6 +584,67 @@ function authOk(m: Message): boolean {
   return m.auth.dmarc === 'pass' || (m.auth.dkim === 'pass' && m.auth.spf === 'pass');
 }
 
+const SOURCES: Record<TrackingEvent['source'], { label: string; tone: 'success' | 'primary' | 'neutral' | 'warning' }> = {
+  human: { label: 'Person', tone: 'success' },
+  proxy: { label: 'Mail proxy', tone: 'primary' },
+  apple: { label: 'Apple Mail prefetch', tone: 'neutral' },
+  scanner: { label: 'Scanner or bot', tone: 'warning' },
+};
+
+// Opens and clicks of a sent message. Machine hits (Apple Mail prefetching, link scanners) are
+// counted apart, since they only show that the message arrived.
+function TrackingLine({ id, t }: { id: number; t: TrackingSummary }) {
+  const [open, setOpen] = useState(false);
+  const events = useQuery({ queryKey: ['tracking', id], queryFn: () => get<{ events: TrackingEvent[] }>(`/messages/${id}/tracking`), enabled: open });
+  const machines = t.machineOpens + t.machineClicks;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pb-1 pl-16 text-[12.5px] text-muted md:pl-[68px]">
+      <Radar className="h-3.5 w-3.5 text-faint" />
+      <span className={cn(t.opened > 0 && 'font-medium text-success')}>{t.opened ? `Opened ${t.opened}×, last ${timeAgo(t.lastOpenedAt!)}` : 'Not opened yet'}</span>
+      {t.links.length > 0 && <span className={cn(t.clicked > 0 && 'font-medium text-success')}>{t.clicked ? `${t.clicked} ${t.clicked === 1 ? 'click' : 'clicks'}` : 'No clicks'}</span>}
+      {machines > 0 && <span className="text-faint">+{machines} by machines</span>}
+      <button type="button" onClick={() => setOpen(true)} className="text-primary-text hover:underline">
+        Details
+      </button>
+      <Dialog open={open} onClose={() => setOpen(false)} title="Opens and clicks" description="People are counted apart from machines: Apple Mail loads images of every message it receives, and security scanners follow links before anyone reads them.">
+        <div className="space-y-4 text-[13px]">
+          {t.links.length > 0 && (
+            <div className="divide-y divide-border rounded-lg border border-border">
+              {t.links.map((l) => (
+                <div key={l.url} className="flex items-center gap-3 px-3 py-2">
+                  <span className="min-w-0 flex-1 truncate font-mono text-[12px]" title={l.url}>
+                    {l.url}
+                  </span>
+                  <span className="shrink-0 tabular-nums text-muted">{l.clicks} {l.clicks === 1 ? 'click' : 'clicks'}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {events.data?.events.length === 0 && <div className="text-muted">Nothing yet.</div>}
+          <div className="divide-y divide-border">
+            {events.data?.events.map((e, i) => (
+              <div key={i} className="flex items-start gap-3 py-2">
+                <span className="w-12 shrink-0 font-medium capitalize">{e.kind}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge tone={SOURCES[e.source].tone}>{SOURCES[e.source].label}</Badge>
+                    {e.country && <span className="text-muted">{e.country}</span>}
+                    {e.url && <span className="truncate font-mono text-[12px] text-muted">{e.url}</span>}
+                  </div>
+                  {e.userAgent && <div className="truncate text-xs text-faint" title={e.userAgent}>{e.userAgent}</div>}
+                </div>
+                <span className="shrink-0 text-xs text-muted tabular-nums" title={fullDate(e.at)}>
+                  {timeAgo(e.at)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </Dialog>
+    </div>
+  );
+}
+
 function AuthBadge({ m }: { m: Message }) {
   if (m.direction === 'out' || (!m.auth.spf && !m.auth.dkim && !m.auth.dmarc)) return null;
   const ok = authOk(m);
@@ -697,7 +758,8 @@ function MessageItem({
 
   const files = m.attachments.filter((a) => !a.inline || !a.contentId || !html?.includes(`cid:${a.contentId}`));
   const recipients = [...m.to, ...m.cc].map((a) => (own.has(a.address.toLowerCase()) ? 'me' : displayName(a).split(' ')[0])).join(', ');
-  const delivered = m.direction === 'out' && m.status === 'delivered';
+  // Sent, Delivered, Opened, Bounced…: what became of a message sent from here.
+  const status = m.direction === 'out' ? sentStatus(m.status, (m.tracking?.opened ?? 0) > 0) : null;
   const section = 'group/msg border-b border-border last:border-b-0';
 
   if (!expanded) {
@@ -708,7 +770,11 @@ function MessageItem({
         <span className="min-w-0 flex-1 truncate text-[13px] text-faint">{m.snippet}</span>
         {m.attachments.some((a) => !a.inline) && <PaperclipIcon className="h-[13px] w-[13px] shrink-0 text-faint" />}
         <span className="flex shrink-0 items-center gap-1 text-xs text-faint tabular-nums">
-          {delivered && <CheckCheck className="h-3.5 w-3.5 text-success" />}
+          {status && (
+            <Badge size="sm" pill tone={status.tone}>
+              {status.label}
+            </Badge>
+          )}
           {listDate(m.sentAt)}
         </span>
       </button>
@@ -806,14 +872,9 @@ function MessageItem({
               {recent && <span className="text-faint max-lg:hidden"> ({timeAgo(m.sentAt)})</span>}
             </span>
           )}
-          {delivered && (
-            <span title="Delivered" className="mr-1">
-              <CheckCheck className="h-3.5 w-3.5 text-success" />
-            </span>
-          )}
-          {m.direction === 'out' && (m.status === 'bounced' || m.status === 'complained') && (
-            <Badge tone="danger" pill className="mr-1 capitalize">
-              {m.status}
+          {status && (
+            <Badge size="sm" pill tone={status.tone} className="mr-1">
+              {status.label}
             </Badge>
           )}
           {canSend && <IconButton label="Reply" shortcut="R" onClick={() => onReply('reply')} icon={<Reply />} className="h-7 w-7 max-md:hidden [&>svg]:h-[15px] [&>svg]:w-[15px]" />}
@@ -851,6 +912,7 @@ function MessageItem({
           </Menu>
         </div>
       </header>
+      {m.tracking && m.status !== 'scheduled' && m.status !== 'failed' && <TrackingLine id={m.id} t={m.tracking} />}
       {details && (
         <dl className="mx-4 mb-[18px] grid max-w-[460px] grid-cols-[84px_1fr] gap-x-2 gap-y-1.5 rounded-lg bg-surface-2 px-3.5 py-3 text-[12.5px] md:mr-5 md:ml-[68px]">
           <dt className="text-faint">From</dt>

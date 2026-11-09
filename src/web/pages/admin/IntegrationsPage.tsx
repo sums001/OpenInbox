@@ -524,7 +524,10 @@ function EditProviderDialog({ provider: p, onClose, onSaved }: { provider: Provi
           )}
         </div>}
         {p.type === 'resend' && (
-          <Field label="Webhook signing secret" hint="Only if you registered the webhook yourself in the Resend dashboard (whsec_…).">
+          <Field
+            label="Webhook signing secret"
+            hint="Only if you registered the webhook yourself in the Resend dashboard (whsec_…). Choose the email.sent, email.delivered, email.bounced and email.complained events: email.sent shows mail your other apps send through Resend."
+          >
             <Input value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="whsec_..." className="font-mono" />
           </Field>
         )}

@@ -1,5 +1,6 @@
 // Delivery events from providers: delivered, bounced, complained. Hard bounces and complaints
-// add the recipient to the suppression list, which the send pipeline checks.
+// add the recipient to the suppression list, which the send pipeline checks. Resend also reports
+// every message sent, including mail other apps send through the account (services/provider-sent.ts).
 import type { Env } from '../env';
 import { all, first, run } from '../db/db';
 import { decrypt, fromBase64Url, hmacSha256, safeEqual, toBase64Url } from '../lib/crypto';
@@ -7,6 +8,7 @@ import { HttpError } from '../lib/errors';
 import { log } from '../lib/log';
 import type { ProviderRow } from '../providers';
 import { bumpState } from './mailboxes';
+import { noteProviderSentStmt } from './provider-sent';
 
 type Outcome = 'delivered' | 'bounced' | 'complained';
 
@@ -69,7 +71,24 @@ export async function handleResendWebhook(env: Env, providerId: number, req: Req
   const body = await req.text();
   if (!p.webhook_secret) throw new HttpError(403, 'forbidden', 'Webhook signing secret not configured.');
   if (!(await verifySvix(await decrypt(env, p.webhook_secret), req.headers, body))) throw new HttpError(401, 'bad_signature', 'Invalid signature.');
-  const event = JSON.parse(body) as { type: string; data: { email_id: string; to?: string[]; bounce?: { type?: string; message?: string } } };
+  const event = JSON.parse(body) as {
+    type: string;
+    data: { email_id: string; message_id?: string; broadcast_id?: string; from?: string; to?: string[]; subject?: string; created_at?: string; bounce?: { type?: string; message?: string } };
+  };
+  if (event.type === 'email.sent') {
+    // Broadcasts (Resend's newsletters) go to whole audiences, not from one person's mailbox.
+    if (!event.data?.email_id || !event.data.from || event.data.broadcast_id) return;
+    const note = noteProviderSentStmt(env.DB, p.id, {
+      providerMessageId: event.data.email_id,
+      messageId: event.data.message_id,
+      from: event.data.from,
+      to: event.data.to ?? [],
+      subject: event.data.subject,
+      sentAt: event.data.created_at,
+    });
+    if (note) await note.run();
+    return;
+  }
   const map: Record<string, Outcome> = { 'email.delivered': 'delivered', 'email.bounced': 'bounced', 'email.complained': 'complained' };
   const outcome = map[event.type];
   if (!outcome || !event.data?.email_id) return;

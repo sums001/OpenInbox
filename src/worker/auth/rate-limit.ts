@@ -9,6 +9,9 @@ export interface Limit {
 export const LOGIN_PER_IP: Limit = { max: 20, windowMs: 15 * 60_000 };
 export const LOGIN_PER_ACCOUNT: Limit = { max: 6, windowMs: 15 * 60_000 };
 export const KEY_CHECK_PER_IP: Limit = { max: 6, windowMs: 15 * 60_000 };
+// Per user across all their API keys. Each allowed request costs one D1 write, so this also keeps
+// one busy client inside the free plan's daily write budget.
+export const API_PER_USER: Limit = { max: 60, windowMs: 60_000 };
 
 export const clientIpKey = (scope: string, ip: string) => `${scope}:ip:${ip}`;
 export const accountKey = (scope: string, email: string) => `${scope}:user:${email.toLowerCase()}`;
@@ -81,4 +84,17 @@ export async function knownLogin(db: D1Database, userId: number, ip: string): Pr
 
 export async function clearFailures(db: D1Database, key: string): Promise<void> {
   await db.prepare('DELETE FROM auth_attempts WHERE key = ?').bind(key).run();
+}
+
+// Counts one use, or returns the seconds to wait when the window is full. A refused use is a read
+// only, so hammering past the limit doesn't spend writes.
+export async function countUse(db: D1Database, key: string, limit: Limit): Promise<number | null> {
+  const now = Date.now();
+  const current = await db.prepare('SELECT count, window_start FROM auth_attempts WHERE key = ?').bind(key).first<Row>();
+  if (current && now - current.window_start < limit.windowMs && current.count >= limit.max) {
+    return Math.max(1, Math.ceil((current.window_start + limit.windowMs - now) / 1000));
+  }
+  // The same fixed-window counter as failed sign-ins.
+  await recordFailure(db, key, limit);
+  return null;
 }
