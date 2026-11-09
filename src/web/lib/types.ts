@@ -61,6 +61,8 @@ export interface ThreadSummary {
   snoozedUntil: number | null;
   assignedTo: number | null;
   labels: number[];
+  // Sent view only: the latest sent message's status, and whether a person opened it.
+  sent?: { status: string; opened: boolean };
 }
 
 export interface Attachment {

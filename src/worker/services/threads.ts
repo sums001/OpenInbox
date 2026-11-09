@@ -49,6 +49,9 @@ export interface ThreadSummary {
   snoozedUntil: number | null;
   assignedTo: number | null;
   labels: number[];
+  // Sent view only: the status of the conversation's latest message that went out (or failed to),
+  // and whether a person opened it, when open tracking is on.
+  sent?: { status: string; opened: boolean };
 }
 
 const COLUMNS =
@@ -174,7 +177,26 @@ export async function listThreads(db: D1Database, p: ListParams): Promise<{ thre
   const page = rows.slice(0, limit);
   const last = page[page.length - 1];
   const sortKey = p.view === 'sent' ? last?.last_sent_at : p.view === 'snoozed' ? last?.snoozed_until : last?.last_message_at;
-  return { threads: await withLabels(db, page), nextCursor: more && last ? `${sortKey}.${last.id}` : null };
+  const threads = await withLabels(db, page);
+  return { threads: p.view === 'sent' ? await withSentStatus(db, threads) : threads, nextCursor: more && last ? `${sortKey}.${last.id}` : null };
+}
+
+// One indexed lookup per conversation of the page (messages_thread). Opens count as in the thread
+// view: by a person or a mail provider's image proxy, not Apple Mail's prefetch or scanners.
+async function withSentStatus(db: D1Database, threads: ThreadSummary[]): Promise<ThreadSummary[]> {
+  if (!threads.length) return threads;
+  const rows = await all<{ thread_id: number; status: string; opened: number }>(
+    db,
+    `SELECT m.thread_id, m.status,
+            EXISTS (SELECT 1 FROM tracking_events e WHERE e.message_id = m.id AND e.kind = 'open' AND e.source IN ('human', 'proxy')) AS opened
+       FROM threads t JOIN messages m ON m.id = (
+         SELECT x.id FROM messages x WHERE x.thread_id = t.id AND x.direction = 'out'
+            AND x.status IN ('sending', 'sent', 'delivered', 'bounced', 'complained', 'failed') ORDER BY x.sent_at DESC, x.id DESC LIMIT 1)
+      WHERE t.id IN (${placeholders(threads.length)})`,
+    ...threads.map((t) => t.id),
+  );
+  const byThread = new Map(rows.map((r) => [r.thread_id, { status: r.status, opened: !!r.opened }]));
+  return threads.map((t) => (byThread.has(t.id) ? { ...t, sent: byThread.get(t.id) } : t));
 }
 
 export async function unreadCounts(db: D1Database, mailboxIds: number[]): Promise<Record<number, Record<string, number>>> {

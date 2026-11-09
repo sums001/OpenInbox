@@ -6,7 +6,6 @@ import {
   ArrowLeft,
   Ban,
   CalendarClock,
-  CheckCheck,
   ChevronDown,
   ChevronUp,
   CircleX,
@@ -42,7 +41,7 @@ import {
 } from 'lucide-react';
 import { del, get, post, errorText } from '../../lib/api';
 import { bytes, displayName, formatAddress, fullDate, listDate, timeAgo } from '../../lib/format';
-import { forwardHtml, ownAddresses, quoteHtml, replyFrom, replyRecipients, snoozePresets } from '../../lib/mail';
+import { forwardHtml, ownAddresses, quoteHtml, replyFrom, replyRecipients, sentStatus, snoozePresets } from '../../lib/mail';
 import { splitQuoted } from '../../lib/sanitize';
 import { textToSafeHtml } from '../../lib/linkify';
 import { useSession, useUser } from '../../lib/session';
@@ -759,7 +758,8 @@ function MessageItem({
 
   const files = m.attachments.filter((a) => !a.inline || !a.contentId || !html?.includes(`cid:${a.contentId}`));
   const recipients = [...m.to, ...m.cc].map((a) => (own.has(a.address.toLowerCase()) ? 'me' : displayName(a).split(' ')[0])).join(', ');
-  const delivered = m.direction === 'out' && m.status === 'delivered';
+  // Sent, Delivered, Opened, Bounced…: what became of a message sent from here.
+  const status = m.direction === 'out' ? sentStatus(m.status, (m.tracking?.opened ?? 0) > 0) : null;
   const section = 'group/msg border-b border-border last:border-b-0';
 
   if (!expanded) {
@@ -770,7 +770,11 @@ function MessageItem({
         <span className="min-w-0 flex-1 truncate text-[13px] text-faint">{m.snippet}</span>
         {m.attachments.some((a) => !a.inline) && <PaperclipIcon className="h-[13px] w-[13px] shrink-0 text-faint" />}
         <span className="flex shrink-0 items-center gap-1 text-xs text-faint tabular-nums">
-          {delivered && <CheckCheck className="h-3.5 w-3.5 text-success" />}
+          {status && (
+            <Badge size="sm" pill tone={status.tone}>
+              {status.label}
+            </Badge>
+          )}
           {listDate(m.sentAt)}
         </span>
       </button>
@@ -868,14 +872,9 @@ function MessageItem({
               {recent && <span className="text-faint max-lg:hidden"> ({timeAgo(m.sentAt)})</span>}
             </span>
           )}
-          {delivered && (
-            <span title="Delivered" className="mr-1">
-              <CheckCheck className="h-3.5 w-3.5 text-success" />
-            </span>
-          )}
-          {m.direction === 'out' && (m.status === 'bounced' || m.status === 'complained') && (
-            <Badge tone="danger" pill className="mr-1 capitalize">
-              {m.status}
+          {status && (
+            <Badge size="sm" pill tone={status.tone} className="mr-1">
+              {status.label}
             </Badge>
           )}
           {canSend && <IconButton label="Reply" shortcut="R" onClick={() => onReply('reply')} icon={<Reply />} className="h-7 w-7 max-md:hidden [&>svg]:h-[15px] [&>svg]:w-[15px]" />}

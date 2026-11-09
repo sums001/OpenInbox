@@ -6,6 +6,7 @@ import { htmlToText, makeSnippet } from '../../src/worker/mail/html';
 import { applyTracking, classifyHit } from '../../src/worker/mail/tracking';
 import { sanitizeSignature } from '../../src/worker/mail/signature';
 import { textToSafeHtml } from '../../src/web/lib/linkify';
+import { sentStatus } from '../../src/web/lib/mail';
 import { buildMime, encodeQuotedPrintable } from '../../src/worker/mail/mime';
 import { buildReferences, normalizeSubject, parseIdList } from '../../src/worker/mail/threading';
 import { authSpamReason, parseAuthResults } from '../../src/worker/mail/auth-results';
@@ -332,6 +333,19 @@ describe('signature sanitizer', () => {
     for (const kept of ['cellpadding="0"', 'border-collapse:collapse', 'bgcolor="#f5f7fa"', 'background:#f5f7fa', 'display:block', 'display:inline-block', 'border-radius:8px', 'src="https://cdn.example.com/logo.png"', 'href="tel:+15550100"']) {
       expect(out).toContain(kept);
     }
+  });
+});
+
+describe('sent status', () => {
+  it('shows problems first, then the furthest step', () => {
+    expect(sentStatus('bounced', true)).toEqual({ label: 'Bounced', tone: 'danger' });
+    expect(sentStatus('complained', false)?.label).toBe('Marked as spam');
+    expect(sentStatus('failed', false)?.label).toBe('Not sent');
+    // An open means it arrived, even without a delivery report.
+    expect(sentStatus('sent', true)).toEqual({ label: 'Opened', tone: 'success' });
+    expect(sentStatus('delivered', false)).toEqual({ label: 'Delivered', tone: 'success' });
+    expect(sentStatus('sent', false)).toEqual({ label: 'Sent', tone: 'neutral' });
+    expect(sentStatus('draft', false)).toBeNull();
   });
 });
 

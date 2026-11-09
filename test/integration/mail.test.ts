@@ -381,6 +381,28 @@ describe('sending', () => {
     expect(r.error).toMatch(/bounced before/);
   });
 
+  it('shows each sent conversation\'s status in the Sent view', async () => {
+    await connectResend(admin);
+    const boxes = await admin.get('/api/mailboxes');
+    const d = await admin.post('/api/drafts', { mailboxId: boxes[0].id, from: 'admin@example.com', to: [{ name: '', address: 'ann@dest.test' }], subject: 'Status', html: '<p>Hi</p>' });
+    await admin.post(`/api/drafts/${d.id}/send`, {});
+    const sentList = async () => (await admin.get('/api/threads?mailbox=all&view=sent')).threads[0];
+    expect((await sentList()).sent).toEqual({ status: 'sent', opened: false });
+
+    // The provider reports delivery, then a person opens it (open tracking).
+    await env.DB.prepare("UPDATE messages SET status = 'delivered' WHERE id = ?").bind(d.id).run();
+    expect((await sentList()).sent).toEqual({ status: 'delivered', opened: false });
+    await env.DB.prepare("INSERT INTO tracking_events (message_id, kind, source, created_at) VALUES (?, 'open', 'apple', ?)").bind(d.id, Date.now()).run();
+    expect((await sentList()).sent.opened).toBe(false); // Apple Mail's prefetch isn't a reader
+    await env.DB.prepare("INSERT INTO tracking_events (message_id, kind, source, created_at) VALUES (?, 'open', 'human', ?)").bind(d.id, Date.now()).run();
+    expect((await sentList()).sent).toEqual({ status: 'delivered', opened: true });
+
+    // Only the Sent view carries it.
+    const all = (await admin.get('/api/threads?mailbox=all&view=archive')).threads[0];
+    expect(all.subject).toBe('Status');
+    expect(all.sent).toBeUndefined();
+  });
+
   it('replaces the webhook on re-register and deletes it with the provider', async () => {
     await env.DB.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('app.url', 'https://openinbox.tester.workers.dev', 0)").run();
     const { id: providerId } = await connectResend(admin);

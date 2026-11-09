@@ -138,6 +138,10 @@ test('setup, send, receive, reply, search and isolate members', async ({ page, b
   expect(sent.html).toMatch(/<span style="color: rgb\(102, 119, 136\); font-style: italic;?">Founder<\/span>/);
   expect(sent.html.indexOf('Thursday works')).toBeLessThan(sent.html.indexOf('data-oi-signature'));
   expect(sent.html.indexOf('data-oi-signature')).toBeLessThan(sent.html.indexOf('<blockquote'));
+  // The Sent list says what became of it: sent, with no delivery report yet.
+  await page.goto('/mail/all/sent');
+  await expect(page.locator('li').filter({ hasText: 'Q4 planning agenda' }).getByText('Sent', { exact: true })).toBeVisible();
+  await page.getByText('Q4 planning agenda').click();
 
   // 5. The recipient replies (SES replaced our Message-ID; References still carries it).
   await deliver(
