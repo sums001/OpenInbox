@@ -91,6 +91,8 @@ export const domainPatchSchema = z.object({
   status: z.enum(['active', 'disabled']).optional(),
 });
 export const appDomainSchema = z.object({ subdomain: z.string().trim().min(1).max(63).default('mail') });
+// The Worker checks the BIMI profile and the exact size limits (src/worker/mail/bimi.ts).
+export const senderLogoSchema = z.object({ svg: z.string().min(1).max(40_000).optional(), certificate: z.string().max(70_000).nullable().optional() });
 
 export const providerSchema = z.object({
   type: z.enum(PROVIDER_TYPES),
@@ -122,6 +124,7 @@ export const settingsSchema = z.object({
   spamRetentionDays: z.number().int().min(1).max(3650).optional(),
   spamPolicy: z.enum(['spam', 'reject', 'off']).optional(),
   remoteImages: z.enum(['block', 'allow']).optional(),
+  senderLogos: z.enum(['off', 'on']).optional(),
   appUrl: z.string().trim().url().max(200).optional(),
 });
 
