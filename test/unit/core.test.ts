@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mergeSpf, spfLookupCount, unquoteTxt } from '../../src/worker/cloudflare/spf';
 import { planRecords, quoteTxt, type CfDnsRecord } from '../../src/worker/cloudflare/dns';
+import { bimiRecord, checkBimiSvg, checkCertificate, dmarcEnforced } from '../../src/worker/mail/bimi';
 import { base32Decode, base32Encode, totpCode, verifyTotp } from '../../src/worker/lib/totp';
 import { loginNetwork } from '../../src/worker/auth/rate-limit';
 import { decrypt, encrypt } from '../../src/worker/lib/crypto';
@@ -62,6 +63,52 @@ describe('DNS planner', () => {
     const recs: CfDnsRecord[] = [{ id: 'a', type: 'TXT', name: 'send.example.com', content: '"v=spf1 include:amazonses.com ~all"' }];
     const actions = planRecords('example.com', recs, [{ type: 'TXT', name: 'send', content: 'v=spf1 include:amazonses.com ~all' }]);
     expect(actions.map((a) => a.op)).toEqual(['noop']);
+  });
+});
+
+describe('sender logos (BIMI)', () => {
+  const svg = (root: string, inner = '<title>Acme</title><circle cx="50" cy="50" r="40" fill="#0b5fff"/>') =>
+    `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" ${root}>${inner}</svg>`;
+  const ok = 'version="1.2" baseProfile="tiny-ps" viewBox="0 0 100 100"';
+
+  it('accepts an SVG Tiny PS logo', () => {
+    expect(checkBimiSvg(svg(ok))).toBeNull();
+    expect(checkBimiSvg(svg(ok, '<!-- <script> in a comment --><title>Acme</title><defs><linearGradient id="g"/></defs><rect fill="url(#g)" xlink:href="#g" width="1" height="1"/>'))).toBeNull();
+  });
+
+  it('refuses what mail apps reject or what could run', () => {
+    expect(checkBimiSvg(svg('viewBox="0 0 100 100"'))).toMatch(/SVG Tiny PS/);
+    expect(checkBimiSvg(svg('version="1.2" baseProfile="tiny-ps" viewBox="0 0 200 100"'))).toMatch(/square/);
+    expect(checkBimiSvg(svg(`${ok} x="0"`))).toMatch(/x or y/);
+    expect(checkBimiSvg(svg(ok, '<circle r="1"/>'))).toMatch(/title/);
+    expect(checkBimiSvg(svg(ok, '<title>A</title><script>alert(1)</script>'))).toMatch(/scripts/);
+    expect(checkBimiSvg(svg(ok, '<title>A</title><g onload="alert(1)"/>'))).toMatch(/event handlers/);
+    expect(checkBimiSvg(svg(ok, '<title>A</title><image href="https://e.test/x.png"/>'))).toMatch(/other files/);
+    expect(checkBimiSvg(svg(ok, '<title>A</title><rect style="fill:url(https://e.test/p)"/>'))).toMatch(/other files/);
+    expect(checkBimiSvg(`<!DOCTYPE svg [<!ENTITY x "y">]>${svg(ok)}`)).toMatch(/DOCTYPE/);
+    expect(checkBimiSvg('<html><body>hi</body></html>')).toMatch(/not an SVG/);
+    expect(checkBimiSvg(svg(ok, `<title>Acme</title><desc>${'x'.repeat(33_000)}</desc>`))).toMatch(/32 KB/);
+  });
+
+  it('checks certificates, DMARC enforcement and builds the record', () => {
+    const pem = '-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIU\n-----END CERTIFICATE-----\n';
+    expect(checkCertificate(pem + pem)).toBeNull();
+    expect(checkCertificate('-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----')).toMatch(/PEM/);
+    expect(checkCertificate(`${pem}-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----`)).toMatch(/only hold certificates/);
+
+    expect(dmarcEnforced('v=DMARC1; p=quarantine; rua=mailto:d@example.com')).toBe(true);
+    expect(dmarcEnforced('v=DMARC1; p=reject; pct=100')).toBe(true);
+    expect(dmarcEnforced('v=DMARC1; p=none')).toBe(false);
+    expect(dmarcEnforced('v=DMARC1; p=quarantine; pct=50')).toBe(false);
+    expect(dmarcEnforced('v=DMARC1; p=reject; sp=none')).toBe(false);
+    expect(dmarcEnforced(null)).toBe(false);
+
+    expect(bimiRecord('https://a.test/l.svg', null)).toBe('v=BIMI1; l=https://a.test/l.svg');
+    expect(bimiRecord('https://a.test/l.svg', 'https://a.test/c.pem')).toBe('v=BIMI1; l=https://a.test/l.svg; a=https://a.test/c.pem');
+    const actions = planRecords('example.com', [{ id: 'old', type: 'TXT', name: 'default._bimi.example.com', content: '"v=BIMI1; l=https://old.test/l.svg"' }], [
+      { type: 'TXT', name: 'default._bimi', content: 'v=BIMI1; l=https://a.test/l.svg', purpose: 'bimi' },
+    ]);
+    expect(actions).toMatchObject([{ op: 'update', recordId: 'old', content: 'v=BIMI1; l=https://a.test/l.svg' }]);
   });
 });
 

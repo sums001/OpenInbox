@@ -7,6 +7,7 @@ import {
   addDomainSchema,
   aliasSchema,
   appDomainSchema,
+  senderLogoSchema,
   createMailboxSchema,
   createUserSchema,
   destinationSchema,
@@ -71,6 +72,7 @@ import {
 } from '../services/providers';
 import { listSuppressions, removeSuppression } from '../services/webhooks';
 import { retryMessage } from '../services/send';
+import { getSenderLogo, removeSenderLogo, setSenderLogo } from '../services/bimi';
 import { deleteBlobs } from '../services/threads';
 import { Cloudflare, cfFromEnv, DEFAULT_CF_API } from '../cloudflare/client';
 import { checkPermissions, listZones, verifyToken, zoneAccess } from '../cloudflare/token';
@@ -187,6 +189,7 @@ admin.get('/domains', async (c) => {
     'SELECT * FROM domains ORDER BY name',
   );
   const counts = await all<{ domain_id: number; n: number }>(c.env.DB, 'SELECT domain_id, COUNT(*) AS n FROM addresses GROUP BY domain_id');
+  const logos = new Map((await all<{ domain_id: number; updated_at: number }>(c.env.DB, 'SELECT domain_id, updated_at FROM sender_logos')).map((l) => [l.domain_id, l.updated_at]));
   return c.json(
     rows.map((d) => ({
       id: d.id,
@@ -196,6 +199,7 @@ admin.get('/domains', async (c) => {
       catchAllMailboxId: d.catch_all_mailbox_id,
       providerId: d.provider_id,
       appHostname: d.app_hostname,
+      logoUpdatedAt: logos.get(d.id) ?? null,
       addresses: counts.find((x) => x.domain_id === d.id)?.n ?? 0,
       health: d.health_checked_at ? parseJson(d.health, null) : null,
       healthCheckedAt: d.health_checked_at,
@@ -285,6 +289,28 @@ admin.post('/domains/:id/app-domain', async (c) => {
   const hostname = await attachAppDomain(c.env, await settingsOf(c), intParam(c, 'id'), subdomain);
   await audit(c.env.DB, { userId: currentUser(c).id, action: 'domain.app_domain', target: hostname, ip: clientIp(c) });
   return c.json({ hostname, url: `https://${hostname}` });
+});
+
+// Sender logo (BIMI). Its public address is the app's address, as set in Admin settings.
+const appBase = (c: { req: { url: string } }, settings: AppSettings) => settings.appUrl ?? new URL(c.req.url).origin;
+
+admin.get('/domains/:id/logo', async (c) => {
+  const settings = await settingsOf(c);
+  return c.json(await getSenderLogo(c.env, settings, appBase(c, settings), intParam(c, 'id')));
+});
+
+admin.put('/domains/:id/logo', async (c) => {
+  const settings = await settingsOf(c);
+  const r = await setSenderLogo(c.env, settings, appBase(c, settings), intParam(c, 'id'), await body(c, senderLogoSchema));
+  await audit(c.env.DB, { userId: currentUser(c).id, action: 'domain.logo_set', target: r.record.name, ip: clientIp(c) });
+  return c.json(r);
+});
+
+admin.delete('/domains/:id/logo', async (c) => {
+  const d = await getDomain(c.env.DB, intParam(c, 'id'));
+  await removeSenderLogo(c.env, await settingsOf(c), d.id);
+  await audit(c.env.DB, { userId: currentUser(c).id, action: 'domain.logo_removed', target: d.name, ip: clientIp(c) });
+  return c.json({ ok: true });
 });
 
 admin.post('/domains/:id/disable-rule', async (c) => {

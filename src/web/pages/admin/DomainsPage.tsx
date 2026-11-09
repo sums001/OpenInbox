@@ -1,12 +1,12 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Check, CircleCheck, CircleDashed, CircleX, Ellipsis, ExternalLink, Globe, ListChecks, LoaderCircle, Lock, Plus, RefreshCw, RotateCw, Trash2, TriangleAlert, Wrench, X } from 'lucide-react';
-import { del, get, patch, post, errorText } from '../../lib/api';
+import { Check, CircleCheck, CircleDashed, CircleX, Ellipsis, ExternalLink, Globe, ImageUp, ListChecks, LoaderCircle, Lock, Plus, RefreshCw, RotateCw, Trash2, TriangleAlert, Wrench, X } from 'lucide-react';
+import { del, get, patch, post, put, errorText } from '../../lib/api';
 import { timeAgo } from '../../lib/format';
 import { useAction, useInvalidate } from '../../lib/hooks';
 import { cn } from '../../lib/utils';
 import { PROVIDER_INFO } from '../../../shared/constants';
-import type { DomainInfo, DomainSetupStep, MailboxAdmin, ProviderInfo, ZoneInspection } from '../../lib/types';
+import type { DomainInfo, DomainSetupStep, MailboxAdmin, ProviderInfo, SenderLogo, ZoneInspection } from '../../lib/types';
 import { Button, IconButton } from '../../components/ui/button';
 import { Checkbox, Field, Select } from '../../components/ui/form';
 import { Alert, Card, EmptyState, IconTile, PageHeader, PageSpinner } from '../../components/ui/misc';
@@ -111,6 +111,7 @@ function DomainCard({ domain: d, mailboxes, providers, onChanged }: { domain: Do
   const [steps, setSteps] = useState<DomainSetupStep[] | null>(null);
   const [running, setRunning] = useState(false);
   const [appDomain, setAppDomain] = useState(false);
+  const [logoOpen, setLogoOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [showHealth, setShowHealth] = useState(false);
   const health = d.health;
@@ -263,6 +264,14 @@ function DomainCard({ domain: d, mailboxes, providers, onChanged }: { domain: Do
             </div>
           )}
         </Field>
+        <Field label="Sender logo" hint="Shown next to your mail in mail apps that support BIMI.">
+          <div className="flex items-center gap-2.5">
+            {d.logoUpdatedAt && <img src={`/api/bimi/${d.name}/logo-${d.logoUpdatedAt}.svg`} alt="" className="h-9 w-9 rounded-md border border-border bg-white object-contain" />}
+            <Button size="sm" icon={d.logoUpdatedAt ? undefined : <ImageUp />} onClick={() => setLogoOpen(true)}>
+              {d.logoUpdatedAt ? 'Change' : 'Add a logo'}
+            </Button>
+          </div>
+        </Field>
         <Field label="Addresses that bypass OpenInbox" hint="Mail to these keeps going to its existing Email Routing rule.">
           {health?.conflicts?.length ? (
             <div className="flex min-h-9 flex-wrap items-center gap-1.5 rounded-lg border border-border px-2 py-[5px]">
@@ -286,6 +295,15 @@ function DomainCard({ domain: d, mailboxes, providers, onChanged }: { domain: Do
           )}
         </Field>
       </div>
+      {logoOpen && (
+        <SenderLogoDialog
+          domain={d}
+          onClose={() => {
+            setLogoOpen(false);
+            onChanged();
+          }}
+        />
+      )}
       {appDomain && (
         <AppDomainDialog
           domain={d}
@@ -319,6 +337,141 @@ function DomainCard({ domain: d, mailboxes, providers, onChanged }: { domain: Do
         OpenInbox turns off its catch-all rule for this domain. Email Routing and DNS records stay as they are.
       </ConfirmDialog>
     </Card>
+  );
+}
+
+const readFile = (f: File) => f.text();
+
+// BIMI: the domain's logo, its optional mark certificate, and what still keeps mail apps from
+// showing it.
+function SenderLogoDialog({ domain, onClose }: { domain: DomainInfo; onClose: () => void }) {
+  const status = useQuery({ queryKey: ['admin', 'logo', domain.id], queryFn: () => get<SenderLogo>(`/admin/domains/${domain.id}/logo`) });
+  const [svg, setSvg] = useState<{ name: string; text: string; preview: string } | null>(null);
+  // undefined keeps the stored certificate, null removes it.
+  const [cert, setCert] = useState<{ name: string; text: string } | null | undefined>(undefined);
+  const [error, setError] = useState('');
+  const svgInput = useRef<HTMLInputElement>(null);
+  const certInput = useRef<HTMLInputElement>(null);
+  const { run, busy } = useAction();
+  const s = status.data;
+  const preview = svg?.preview ?? s?.logo?.url;
+  const hasCert = cert === undefined ? !!s?.logo?.certificateUrl : !!cert;
+
+  useEffect(() => () => (svg ? URL.revokeObjectURL(svg.preview) : undefined), [svg]);
+
+  const pickSvg = async (f: File | undefined) => {
+    if (!f) return;
+    const text = await readFile(f);
+    setSvg({ name: f.name, text, preview: URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' })) });
+  };
+  const save = () =>
+    run('save', async () => {
+      setError('');
+      try {
+        await put(`/admin/domains/${domain.id}/logo`, { ...(svg ? { svg: svg.text } : {}), ...(cert !== undefined ? { certificate: cert?.text ?? null } : {}) });
+        onClose();
+      } catch (e) {
+        setError(errorText(e));
+      }
+    });
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={`Sender logo for ${domain.name}`}
+      description="Mail apps that support BIMI, such as Yahoo Mail, show this logo next to your mail once they trust your domain's sending. Gmail and Apple Mail also require a mark certificate (VMC or CMC) from a certificate authority."
+      footerStart={
+        s?.logo ? (
+          <Button variant="ghost" icon={<Trash2 />} loading={busy === 'remove'} onClick={() => run('remove', () => del(`/admin/domains/${domain.id}/logo`).then(onClose), 'Logo removed')}>
+            Remove
+          </Button>
+        ) : undefined
+      }
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" loading={busy === 'save'} disabled={!svg && cert === undefined} onClick={save}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      {status.isLoading ? (
+        <PageSpinner />
+      ) : (
+        <div className="flex flex-col gap-4">
+          {status.error ? <Alert tone="danger">{errorText(status.error)}</Alert> : null}
+          {error && <Alert tone="danger">{error}</Alert>}
+          <div className="flex items-center gap-3.5">
+            <div className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-xl border border-border bg-white">
+              {preview ? <img src={preview} alt="Logo preview" className="h-full w-full object-contain" /> : <ImageUp className="h-5 w-5 text-faint" />}
+            </div>
+            <div className="min-w-0 flex-1 text-[12.5px] text-muted">
+              A square SVG in the <b className="font-medium text-fg">SVG Tiny PS</b> profile, under 32 KB, with a title. Most design tools export plain SVG; convert it with a BIMI SVG converter first.
+              {svg && <div className="mt-1 truncate text-fg">{svg.name}</div>}
+            </div>
+            <Button size="sm" onClick={() => svgInput.current?.click()}>
+              {preview ? 'Replace' : 'Choose SVG'}
+            </Button>
+            <input ref={svgInput} type="file" accept=".svg,image/svg+xml" className="hidden" onChange={(e) => pickSvg(e.target.files?.[0])} />
+          </div>
+          <div className="flex items-center gap-3 rounded-lg border border-border px-3.5 py-2.5 text-[12.5px]">
+            <span className="min-w-0 flex-1 text-muted">
+              <b className="font-medium text-fg">Mark certificate</b> (optional): the .pem file of your VMC or CMC.
+              {hasCert && <span className="ml-1 text-fg">{cert ? cert.name : 'On file.'}</span>}
+            </span>
+            {hasCert && (
+              <Button size="xs" variant="ghost" onClick={() => setCert(null)}>
+                Remove
+              </Button>
+            )}
+            <Button size="xs" onClick={() => certInput.current?.click()}>
+              {hasCert ? 'Replace' : 'Add'}
+            </Button>
+            <input
+              ref={certInput}
+              type="file"
+              accept=".pem,.crt,application/x-pem-file"
+              className="hidden"
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                if (f) setCert({ name: f.name, text: await readFile(f) });
+              }}
+            />
+          </div>
+          {s && (
+            <div className="overflow-hidden rounded-lg border border-border">
+              <LogoCheck ok={s.dmarc.enforced} label={s.dmarc.enforced ? 'DMARC is enforced' : "DMARC isn't enforced"}>
+                {s.dmarc.enforced
+                  ? s.dmarc.record
+                  : `Mail apps show the logo only under p=quarantine or p=reject. ${s.dmarc.record ? `It is ${s.dmarc.record}.` : 'There is no DMARC record.'} Change it in Cloudflare DNS once your mail passes DMARC; the reports p=none sends help you check.`}
+              </LogoCheck>
+              <LogoCheck ok={s.https} label={s.https ? 'Served over HTTPS' : "Not served over HTTPS"}>
+                {s.https ? (s.logo?.url ?? 'From this app’s address.') : 'Mail apps fetch logos over HTTPS only. Set the app’s https address in Admin → Settings.'}
+              </LogoCheck>
+              {s.logo && (
+                <LogoCheck ok={s.record.current === s.record.expected} label={s.record.current === s.record.expected ? `${s.record.name} is in place` : `${s.record.name} doesn't match`}>
+                  {s.record.current === s.record.expected ? s.record.current : `Expected ${s.record.expected}, found ${s.record.current ?? 'none'}. Save again to rewrite it.`}
+                </LogoCheck>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+function LogoCheck({ ok, label, children }: { ok: boolean; label: string; children: ReactNode }) {
+  return (
+    <div className="flex gap-2.5 border-b border-border px-3.5 py-2.5 last:border-b-0">
+      {ok ? <CircleCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" /> : <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />}
+      <div className="min-w-0">
+        <div className="text-[13px] font-medium">{label}</div>
+        <div className="text-xs break-words text-muted">{children}</div>
+      </div>
+    </div>
   );
 }
 

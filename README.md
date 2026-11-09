@@ -83,6 +83,7 @@ OpenInbox is built for everyday conversations. It is not a bulk or marketing sen
 **Admin**
 - Dashboard with traffic, free-tier usage and delivery and audit logs.
 - Domain health checks with one-click repair. DNS records (SPF, DKIM, DMARC) are written for you.
+- A sender logo per domain ([BIMI](https://bimigroup.org/)): upload a square SVG and OpenInbox hosts it and writes the `default._bimi` record.
 
 **Security**
 - HTML mail is sanitized and sandboxed, and remote images are blocked until you allow them.
@@ -231,6 +232,7 @@ If your copy was created before automatic updates were removed, its workflow sti
 | Problem | What to do |
 | --- | --- |
 | Mail not arriving or not sending | Start with **Admin → Domains → Check health** and **Admin → Mail flow** |
+| No logo next to my mail | Mail apps show a [BIMI](https://bimigroup.org/) logo only when the domain's DMARC policy is `p=quarantine` or `p=reject`; **Admin → Domains → Sender logo** shows what is missing. Gmail and Apple Mail also need a mark certificate (VMC or CMC). Without one, Gmail may show the photo of a Google Account created for that address |
 | Locked out of the owner account | On the sign-in page, choose **Owner locked out?** and enter the owner email and your recovery key |
 | "A repository with that name already exists" on the Deploy form | An earlier deploy already made that repo. Change **Project name**, or [update](#updating) the existing instance instead |
 
