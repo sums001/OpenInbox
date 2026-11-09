@@ -30,12 +30,15 @@ export const DEFAULT_SETTINGS = {
   spamPolicy: 'spam' as SpamPolicy,
   remoteImages: 'block' as RemoteImagesPolicy,
   tracking: 'off' as TrackingPolicy,
+  senderLogos: 'off' as SenderLogosPolicy,
 };
 
 export type SpamPolicy = 'spam' | 'reject' | 'off';
 export type RemoteImagesPolicy = 'block' | 'allow';
 // Open and click tracking of all mail people send, for the whole instance.
 export type TrackingPolicy = 'off' | 'on';
+// Senders' BIMI logos next to their mail, for the whole instance.
+export type SenderLogosPolicy = 'off' | 'on';
 
 export const PROVIDER_TYPES = ['resend', 'brevo', 'mailjet', 'cloudflare', 'smtp'] as const;
 export type ProviderType = (typeof PROVIDER_TYPES)[number];

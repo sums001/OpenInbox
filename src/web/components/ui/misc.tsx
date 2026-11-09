@@ -124,9 +124,24 @@ export function Kbd({ children, className }: { children: ReactNode; className?: 
   );
 }
 
-// Initials on a soft tint of a color derived from the address.
-export function Avatar({ name, address, size = 32 }: { name: string; address: string; size?: number }) {
+// Initials on a soft tint of a color derived from the address, or the sender's BIMI logo when the
+// server has one for a message that passed DMARC.
+export function Avatar({ name, address, size = 32, logo }: { name: string; address: string; size?: number; logo?: string | null }) {
+  const [broken, setBroken] = useState(false);
   const col = `oklch(0.66 0.14 ${hue(address || name)})`;
+  if (logo && !broken) {
+    const domain = address.slice(address.lastIndexOf('@') + 1);
+    return (
+      <img
+        src={logo}
+        alt=""
+        title={`Logo published by ${domain}`}
+        onError={() => setBroken(true)}
+        className="shrink-0 rounded-full border border-border bg-white object-contain"
+        style={{ width: size, height: size }}
+      />
+    );
+  }
   return (
     <div
       className="flex shrink-0 items-center justify-center rounded-full font-semibold"

@@ -93,6 +93,7 @@ export interface Message {
   truncated: boolean;
   rawAvailable: boolean;
   auth: { spf: string | null; dkim: string | null; dmarc: string | null };
+  fromLogo: string | null;
   spamReason: string | null;
   listUnsubscribe: { url?: string; mailto?: string; oneClick: boolean } | null;
   error: string | null;
@@ -154,11 +155,19 @@ export interface DomainInfo {
   catchAllMailboxId: number | null;
   providerId: number | null;
   appHostname: string | null;
+  logoUpdatedAt: number | null;
   addresses: number;
   health: { items: HealthItem[]; conflicts: { address: string; action: string }[]; checkedAt: number } | null;
   healthCheckedAt: number | null;
   setup: { steps: DomainSetupStep[]; done: boolean };
   createdAt: number;
+}
+
+export interface SenderLogo {
+  logo: { url: string; certificateUrl: string | null; updatedAt: number } | null;
+  record: { name: string; expected: string | null; current: string | null };
+  dmarc: { record: string | null; enforced: boolean };
+  https: boolean;
 }
 
 export interface ZoneInspection {

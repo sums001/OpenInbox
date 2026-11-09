@@ -26,6 +26,7 @@ import { contentDisposition, isInlineSafe } from '../mail/decode';
 import { storeFor } from '../storage';
 import { buildMime } from '../mail/mime';
 import { ingest } from '../services/inbound';
+import { senderLogoSvg, withSenderLogos } from '../services/sender-logos';
 import { sendSystemReply } from '../services/send';
 import { trackingEvents } from '../services/tracking';
 import { isValidAddress, normalizeAddress, singleLine } from '../mail/address';
@@ -103,7 +104,19 @@ mail.get('/threads/:id', async (c) => {
   const user = currentUser(c);
   const t = await assertThread(c.env.DB, user, intParam(c, 'id'));
   const data = await getThread(c.env.DB, t.threadId);
+  if (c.get('settings').senderLogos === 'on') await withSenderLogos(c.env.DB, data.messages);
   return c.json({ ...data, canSend: t.canSend });
+});
+
+// A sender's BIMI logo, from the cache the cron fills. Sandboxed like any SVG from outside.
+mail.get('/sender-logos/:domain', async (c) => {
+  const svg = c.get('settings').senderLogos === 'on' ? await senderLogoSvg(c.env.DB, c.req.param('domain')) : null;
+  if (!svg) throw notFound('No logo.');
+  return c.body(svg, 200, {
+    'Content-Type': 'image/svg+xml; charset=utf-8',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    'Cache-Control': 'private, max-age=86400',
+  });
 });
 
 mail.post('/threads/actions', async (c) => {

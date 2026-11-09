@@ -17,6 +17,7 @@ interface InstanceSettings {
   spamPolicy: 'spam' | 'reject' | 'off';
   remoteImages: 'block' | 'allow';
   tracking: 'off' | 'on';
+  senderLogos: 'off' | 'on';
   appUrl: string | null;
   version: string;
   keyRotation: boolean;
@@ -103,6 +104,15 @@ function GeneralSettings() {
           <Select value={s.tracking} onChange={(e) => set('tracking', e.target.value as InstanceSettings['tracking'])}>
             <option value="off">Off</option>
             <option value="on">Track all sent mail</option>
+          </Select>
+        </Field>
+        <Field
+          label="Senders' logos"
+          hint="Shows the BIMI logo a domain publishes next to its mail, when the mail passes DMARC and the domain enforces DMARC. Logos are fetched by the server and aren't checked against a mark certificate, so a look-alike domain can publish a look-alike logo."
+        >
+          <Select value={s.senderLogos} onChange={(e) => set('senderLogos', e.target.value as InstanceSettings['senderLogos'])}>
+            <option value="off">Off: show initials</option>
+            <option value="on">Show senders' logos</option>
           </Select>
         </Field>
       </div>

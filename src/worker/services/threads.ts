@@ -216,6 +216,8 @@ export interface MessageDetail {
   truncated: boolean;
   rawAvailable: boolean;
   auth: { spf: string | null; dkim: string | null; dmarc: string | null };
+  // The sender's BIMI logo, when senders' logos are on (routes/mail.ts).
+  fromLogo: string | null;
   spamReason: string | null;
   listUnsubscribe: { url?: string; mailto?: string; oneClick: boolean } | null;
   error: string | null;
@@ -322,6 +324,7 @@ export async function getThread(db: D1Database, threadId: number, messageId?: nu
       truncated: !!m.truncated,
       rawAvailable: !!m.raw_key,
       auth: { spf: m.spf, dkim: m.dkim, dmarc: m.dmarc },
+      fromLogo: null,
       spamReason: m.spam_reason,
       listUnsubscribe: parseJson(m.list_unsubscribe, null),
       error: m.error,

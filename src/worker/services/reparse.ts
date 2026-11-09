@@ -13,7 +13,9 @@ import { D1BlobStore, storeFor } from '../storage';
 import { fitBody } from './bodies';
 import { bumpState } from './mailboxes';
 
-export async function reparseQueued(env: Env, limit = 20): Promise<number> {
+// Each message is a full scan of its raw copy, so batches stay small (like retryUnparsed) to keep
+// the cron inside the free plan's CPU limit.
+export async function reparseQueued(env: Env, limit = 3): Promise<number> {
   const db = env.DB;
   const rows = await all<{ id: number; thread_id: number; mailbox_id: number; raw_key: string | null; raw_store: 'd1' | 'r2' | null }>(
     db,

@@ -765,7 +765,7 @@ function MessageItem({
   if (!expanded) {
     return (
       <button type="button" onClick={onToggle} className={cn(section, 'flex h-[52px] w-full items-center gap-3 px-4 text-left transition-colors first:rounded-t-xl last:rounded-b-xl hover:bg-surface-2 md:px-5')}>
-        <Avatar name={m.from.name} address={m.from.address} size={28} />
+        <Avatar name={m.from.name} address={m.from.address} logo={m.fromLogo} size={28} />
         <span className={cn('w-[110px] shrink-0 truncate text-[13px] md:w-[130px]', !m.isRead ? 'font-semibold' : 'font-medium')}>{isMe ? 'me' : displayName(m.from)}</span>
         <span className="min-w-0 flex-1 truncate text-[13px] text-faint">{m.snippet}</span>
         {m.attachments.some((a) => !a.inline) && <PaperclipIcon className="h-[13px] w-[13px] shrink-0 text-faint" />}
@@ -838,7 +838,7 @@ function MessageItem({
         </div>
       )}
       <header className="flex items-start gap-3 px-4 pt-4 pb-1.5 md:px-5 md:pt-[18px]">
-        <Avatar name={m.from.name} address={m.from.address} size={36} />
+        <Avatar name={m.from.name} address={m.from.address} logo={m.fromLogo} size={36} />
         <div className="min-w-0 flex-1 cursor-pointer" onClick={onToggle}>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
             <span className="text-sm font-semibold">{m.from.name || m.from.address}</span>
