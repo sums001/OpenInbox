@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mergeSpf, spfLookupCount, unquoteTxt } from '../../src/worker/cloudflare/spf';
 import { planRecords, quoteTxt, type CfDnsRecord } from '../../src/worker/cloudflare/dns';
 import { bimiRecord, checkBimiSvg, checkCertificate, dmarcEnforced } from '../../src/worker/mail/bimi';
+import { orgDomain, recordTag, senderDomain } from '../../src/worker/services/sender-logos';
 import { base32Decode, base32Encode, totpCode, verifyTotp } from '../../src/worker/lib/totp';
 import { loginNetwork } from '../../src/worker/auth/rate-limit';
 import { decrypt, encrypt } from '../../src/worker/lib/crypto';
@@ -109,6 +110,19 @@ describe('sender logos (BIMI)', () => {
       { type: 'TXT', name: 'default._bimi', content: 'v=BIMI1; l=https://a.test/l.svg', purpose: 'bimi' },
     ]);
     expect(actions).toMatchObject([{ op: 'update', recordId: 'old', content: 'v=BIMI1; l=https://a.test/l.svg' }]);
+  });
+});
+
+describe("senders' logos", () => {
+  it('finds the organizational domain and record tags', () => {
+    expect(orgDomain('news.mail.shop.example')).toBe('shop.example');
+    expect(orgDomain('example.com')).toBe('example.com');
+    expect(orgDomain('mail.example.co.uk')).toBe('example.co.uk');
+    expect(orgDomain('a.b.example.de')).toBe('example.de');
+    expect(senderDomain('Ann.Lee@Mail.Example.COM')).toBe('mail.example.com');
+    expect(recordTag('v=BIMI1;l=https://a.test/l.svg;a=https://a.test/c.pem', 'l')).toBe('https://a.test/l.svg');
+    expect(recordTag('v=BIMI1; l=; a=;', 'l')).toBe('');
+    expect(recordTag('v=BIMI1; a=x', 'l')).toBeUndefined();
   });
 });
 

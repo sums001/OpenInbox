@@ -12,6 +12,7 @@ import { cleanup, purgeOldTrash } from './services/retention';
 import { checkDomainHealth } from './services/domains';
 import { checkForUpdate } from './services/updates';
 import { logError } from './lib/log';
+import { refreshSenderLogos } from './services/sender-logos';
 
 async function safely(name: string, fn: () => Promise<unknown>): Promise<void> {
   try {
@@ -39,5 +40,6 @@ export async function handleScheduled(controller: ScheduledController, env: Env)
     await safely('unparsed', () => retryUnparsed(env));
     await safely('reparse', () => reparseQueued(env));
     await safely('domains', () => refreshPendingDomains(env));
+    if (settings.senderLogos === 'on') await safely('sender-logos', () => refreshSenderLogos(env));
   }
 }

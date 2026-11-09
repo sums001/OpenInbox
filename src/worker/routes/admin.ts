@@ -73,6 +73,7 @@ import {
 import { listSuppressions, removeSuppression } from '../services/webhooks';
 import { retryMessage } from '../services/send';
 import { getSenderLogo, removeSenderLogo, setSenderLogo } from '../services/bimi';
+import { noteRecentSenders } from '../services/sender-logos';
 import { deleteBlobs } from '../services/threads';
 import { Cloudflare, cfFromEnv, DEFAULT_CF_API } from '../cloudflare/client';
 import { checkPermissions, listZones, verifyToken, zoneAccess } from '../cloudflare/token';
@@ -524,6 +525,7 @@ admin.get('/settings', async (c) => {
     spamRetentionDays: s.spamRetentionDays,
     spamPolicy: s.spamPolicy,
     remoteImages: s.remoteImages,
+    senderLogos: s.senderLogos,
     appUrl: s.appUrl,
     version: __APP_VERSION__,
     keyRotation: !!c.env.ENCRYPTION_KEY_PREVIOUS,
@@ -532,7 +534,9 @@ admin.get('/settings', async (c) => {
 
 admin.patch('/settings', async (c) => {
   const input = await body(c, settingsSchema);
+  const before = await settingsOf(c);
   await saveSettings(c.env.DB, { ...input, appUrl: input.appUrl?.replace(/\/$/, '') });
+  if (input.senderLogos === 'on' && before.senderLogos !== 'on') await noteRecentSenders(c.env.DB);
   await audit(c.env.DB, { userId: currentUser(c).id, action: 'settings.updated', details: input, ip: clientIp(c) });
   return c.json({ ok: true });
 });

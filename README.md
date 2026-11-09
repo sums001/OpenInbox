@@ -88,6 +88,7 @@ OpenInbox is built for everyday conversations. It is not a bulk or marketing sen
 **Security**
 - HTML mail is sanitized and sandboxed, and remote images are blocked until you allow them.
 - Mail that fails SPF, DKIM or DMARC goes to Spam.
+- Optional senders' logos ([BIMI](https://bimigroup.org/)) next to mail that passes DMARC, fetched by the server so senders can't tell when you read their mail.
 - Optional two-factor sign-in. Stored credentials are encrypted.
 
 ## Screenshots
