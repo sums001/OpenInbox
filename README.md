@@ -73,6 +73,7 @@ OpenInbox is built for everyday conversations. It is not a bulk or marketing sen
 **Mail**
 - Receive on any domain in your Cloudflare account. Email Routing is set up for you.
 - Send through Resend, Brevo, Mailjet, Cloudflare Email Sending or any SMTP server. When one provider hits its free limit, mail falls back to another.
+- Mail your other apps send through Resend (over its SMTP or API) counts toward its limit, and shows in Sent when it comes from an address with a mailbox.
 - Threads, All Mail, search (`from:` `has:attachment` `before:`), labels, filters, snooze, scheduled and undo send.
 - Command palette and keyboard shortcuts, dark mode, mobile layout.
 - [Inbox API](API.md): per-user API keys to read, search, organize and send mail from scripts and apps.

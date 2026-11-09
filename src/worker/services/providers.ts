@@ -111,12 +111,35 @@ export async function registerWebhook(env: Env, settings: AppSettings, providerI
   const secret = p.type === 'resend' ? hook.secret ?? null : token;
   await run(
     env.DB,
-    'UPDATE providers SET webhook_id = ?, webhook_secret = ? WHERE id = ?',
+    'UPDATE providers SET webhook_id = ?, webhook_secret = ?, webhook_version = ? WHERE id = ?',
     hook.id,
     secret ? await encrypt(env, secret) : null,
+    WEBHOOK_VERSION,
     p.id,
   );
   return true;
+}
+
+// Bumped when a provider's webhook events change (RESEND_WEBHOOK_EVENTS). 1: Resend's email.sent.
+export const WEBHOOK_VERSION = 1;
+
+// Cron: registers webhooks made with an older event list again, one provider per run. Each is
+// tried once; when the provider refuses, the admin can re-register it from Integrations.
+// Webhooks added by hand ('manual') are the admin's to change.
+export async function upgradeWebhooks(env: Env, settings: AppSettings): Promise<void> {
+  if (!settings.appUrl || settings.appUrl.includes('localhost')) return;
+  const p = await first<{ id: number }>(
+    env.DB,
+    "SELECT id FROM providers WHERE type = 'resend' AND webhook_id IS NOT NULL AND webhook_id != 'manual' AND webhook_version < ? LIMIT 1",
+    WEBHOOK_VERSION,
+  );
+  if (!p) return;
+  await run(env.DB, 'UPDATE providers SET webhook_version = ? WHERE id = ?', WEBHOOK_VERSION, p.id);
+  try {
+    if (!(await registerWebhook(env, settings, p.id))) throw new Error('The provider did not accept the webhook.');
+  } catch (e) {
+    logError('provider.webhook_upgrade_failed', e, { provider: p.id });
+  }
 }
 
 export async function updateProvider(
