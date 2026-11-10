@@ -1,6 +1,32 @@
-export function LogoMark({ size = 28 }: { size?: number }) {
+import { useEffect, useState } from 'react';
+import { useSession } from '../lib/session';
+
+export function LogoMark({ size = 28, src, className }: { size?: number; src?: string | null; className?: string }) {
+  const { data: session } = useSession();
+  const [failed, setFailed] = useState(false);
+  const logoUrl = src !== undefined ? (src || null) : (session?.logoUrl ?? null);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [logoUrl]);
+
+  if (logoUrl && !failed) {
+    return (
+      <img
+        src={logoUrl}
+        alt=""
+        width={size}
+        height={size}
+        onError={() => setFailed(true)}
+        className={`shrink-0 object-contain ${className ?? ''}`}
+        style={{ width: size, height: size }}
+        aria-hidden
+      />
+    );
+  }
+
   return (
-    <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden>
+    <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden className={`shrink-0 ${className ?? ''}`}>
       <defs>
         <linearGradient id="oi-g" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="#6366f1" />
@@ -16,11 +42,13 @@ export function LogoMark({ size = 28 }: { size?: number }) {
   );
 }
 
-export function Logo({ name = 'OpenInbox' }: { name?: string }) {
+export function Logo({ name }: { name?: string }) {
+  const { data: session } = useSession();
+  const displayName = name ?? session?.instanceName ?? 'OpenInbox';
   return (
     <div className="flex items-center gap-2">
       <LogoMark />
-      <span className="text-[15px] font-semibold tracking-tight text-fg">{name}</span>
+      <span className="text-[15px] font-semibold tracking-tight text-fg">{displayName}</span>
     </div>
   );
 }

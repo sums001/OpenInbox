@@ -6,6 +6,8 @@ import { all, run } from './db';
 export interface AppSettings {
   setupCompletedAt: number | null;
   instanceName: string;
+  logoUrl: string | null;
+  faviconUrl: string | null;
   appUrl: string | null;
   cfAccountId: string | null;
   cfAccountName: string | null;
@@ -28,6 +30,8 @@ export interface AppSettings {
 const KEYS: Record<keyof AppSettings, string> = {
   setupCompletedAt: 'setup.completed_at',
   instanceName: 'instance.name',
+  logoUrl: 'instance.logo_url',
+  faviconUrl: 'instance.favicon_url',
   appUrl: 'app.url',
   cfAccountId: 'cf.account_id',
   cfAccountName: 'cf.account_name',
@@ -52,6 +56,8 @@ const NUMERIC = new Set<keyof AppSettings>(['setupCompletedAt', 'keyGeneratedAt'
 const DEFAULTS: AppSettings = {
   setupCompletedAt: null,
   instanceName: 'OpenInbox',
+  logoUrl: null,
+  faviconUrl: null,
   appUrl: null,
   cfAccountId: null,
   cfAccountName: null,
