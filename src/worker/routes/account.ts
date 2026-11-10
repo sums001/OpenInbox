@@ -2,7 +2,7 @@
 import { Hono } from 'hono';
 import type { AppBindings } from '../types';
 import { body } from '../lib/validate';
-import { passwordChangeSchema, profileSchema, totpSchema, trustedSenderSchema } from '../../shared/schemas';
+import { passwordChangeSchema, profileSchema, pushSubscriptionSchema, pushUnsubscribeSchema, totpSchema, trustedSenderSchema } from '../../shared/schemas';
 import { all, first, run } from '../db/db';
 import { currentUser, clientIp } from '../auth/middleware';
 import { verifyPassword } from '../lib/password';
@@ -11,6 +11,8 @@ import { hashRecoveryCode, matchTotpStep, newRecoveryCodes, newTotpSecret, otpau
 import { badRequest, HttpError, notFound } from '../lib/errors';
 import { changePassword, type UserRow } from '../services/users';
 import { audit } from '../services/audit';
+import { getOrGenerateVapidKeys, notifyUser } from '../services/webpush';
+import { newId } from '../lib/ids';
 
 export const account = new Hono<AppBindings>();
 
@@ -115,3 +117,61 @@ account.delete('/trusted-senders/:pattern', async (c) => {
   await run(c.env.DB, 'DELETE FROM trusted_senders WHERE user_id = ? AND pattern = ?', user.id, decodeURIComponent(c.req.param('pattern')));
   return c.json({ ok: true });
 });
+
+account.get('/push/vapid-public-key', async (c) => {
+  const keys = await getOrGenerateVapidKeys(c.env);
+  return c.json({ publicKey: keys.publicKey });
+});
+
+account.get('/push/status', async (c) => {
+  const user = currentUser(c);
+  const rows = await all<{ id: number }>(c.env.DB, 'SELECT id FROM push_subscriptions WHERE user_id = ?', user.id);
+  return c.json({ count: rows.length, subscribed: rows.length > 0 });
+});
+
+account.post('/push/subscribe', async (c) => {
+  const user = currentUser(c);
+  const input = await body(c, pushSubscriptionSchema);
+  const now = Date.now();
+  const userAgent = c.req.header('user-agent') ?? null;
+
+  await run(
+    c.env.DB,
+    `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, user_agent, created_at, last_used_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (endpoint) DO UPDATE SET
+       user_id = excluded.user_id,
+       p256dh = excluded.p256dh,
+       auth = excluded.auth,
+       user_agent = excluded.user_agent,
+       last_used_at = excluded.last_used_at`,
+    newId(),
+    user.id,
+    input.endpoint,
+    input.p256dh,
+    input.auth,
+    userAgent,
+    now,
+    now,
+  );
+
+  return c.json({ ok: true });
+});
+
+account.post('/push/unsubscribe', async (c) => {
+  const user = currentUser(c);
+  const input = await body(c, pushUnsubscribeSchema);
+  await run(c.env.DB, 'DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?', user.id, input.endpoint);
+  return c.json({ ok: true });
+});
+
+account.post('/push/test', async (c) => {
+  const user = currentUser(c);
+  const count = await notifyUser(c.env, user.id, {
+    title: 'OpenInbox Notification Test · OpenInbox Team',
+    body: 'Push notifications are working properly on this device!',
+    url: '/mail/all/inbox',
+  });
+  return c.json({ ok: true, sent: count });
+});
+

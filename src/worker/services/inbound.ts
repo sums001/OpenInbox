@@ -25,6 +25,7 @@ import { counterStmt, dailyStatStmt, inboundLogStmt, logInbound } from './stats'
 import { bumpState, type AutoReply } from './mailboxes';
 import { maybeAutoReply } from './autoreply';
 import { noteSenderStmt, senderDomain } from './sender-logos';
+import { notifyMailboxMembers } from './webpush';
 
 export interface Recipient {
   mailboxId: number;
@@ -454,6 +455,22 @@ async function sideEffects(c: Context, o: IngestOptions, mailboxId: number, thre
         logError('autoreply.failed', e),
       ),
     );
+  }
+
+  // Web Push notification to user devices (phone / desktop)
+  const isInbox = (actions.folder ?? o.folderOverride ?? 'inbox') === 'inbox' && !actions.markRead && !o.markRead;
+  if (isInbox) {
+    const sender = p.from.name || p.from.address;
+    const subject = p.subject.trim() || '(No subject)';
+    const snippet = makeSnippet(p.text);
+    const push = notifyMailboxMembers(env, mailboxId, {
+      title: `${subject} · ${sender}`,
+      body: snippet || 'New message received',
+      url: `/mail/all/inbox/${threadId}`,
+      threadId,
+      tag: `thread-${threadId}`,
+    }).catch((e) => logError('inbound.push_failed', e));
+    if (o.ctx) o.ctx.waitUntil(push);
   }
 }
 

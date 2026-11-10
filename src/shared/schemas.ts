@@ -180,3 +180,14 @@ export const noteSchema = z.object({ body: z.string().trim().min(1).max(5000) })
 export const blockSchema = z.object({ pattern: z.string().trim().min(3).max(254), mailboxId: id.nullable().optional() });
 export const destinationSchema = z.object({ email: z.string().trim().email().max(254) });
 export const trustedSenderSchema = z.object({ pattern: z.string().trim().min(3).max(254) });
+
+export const pushSubscriptionSchema = z.object({
+  endpoint: z.string().trim().url().max(1000),
+  p256dh: z.string().trim().min(10).max(500),
+  auth: z.string().trim().min(10).max(500),
+});
+
+export const pushUnsubscribeSchema = z.object({
+  endpoint: z.string().trim().url().max(1000),
+});
+
