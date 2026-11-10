@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Navigate, Route, Routes } from 'react-router';
 import { useSession } from './lib/session';
 import { errorText } from './lib/api';
@@ -18,6 +18,22 @@ const SettingsPage = lazy(() => import('./pages/settings/SettingsPage'));
 
 export function App() {
   const { data: session, isLoading, error, refetch } = useSession();
+
+  useEffect(() => {
+    const favicon = session?.faviconUrl;
+    let link = document.querySelector<HTMLLinkElement>("link[rel~='icon']");
+    if (favicon) {
+      if (!link) {
+        link = document.createElement('link');
+        link.rel = 'icon';
+        document.head.appendChild(link);
+      }
+      link.href = favicon;
+    } else if (link && link.getAttribute('href') !== '/favicon.svg') {
+      link.href = '/favicon.svg';
+    }
+  }, [session?.faviconUrl]);
+
   if (isLoading) return <PageSpinner />;
   if (!session) {
     return (

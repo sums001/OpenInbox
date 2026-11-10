@@ -9,6 +9,8 @@ export interface Address {
 export interface Session {
   setupComplete: boolean;
   instanceName: string;
+  logoUrl: string | null;
+  faviconUrl: string | null;
   version: string;
   storageMode: 'text' | 'r2';
   remoteImages: 'block' | 'allow';

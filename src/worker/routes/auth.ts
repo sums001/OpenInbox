@@ -27,6 +27,8 @@ auth.get('/session', async (c) => {
   return c.json({
     setupComplete,
     instanceName: settings.instanceName,
+    logoUrl: settings.logoUrl,
+    faviconUrl: settings.faviconUrl,
     version: __APP_VERSION__,
     storageMode: settings.storageMode,
     remoteImages: settings.remoteImages,

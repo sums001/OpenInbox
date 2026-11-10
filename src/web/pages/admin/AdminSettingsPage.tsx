@@ -8,9 +8,12 @@ import { Button, IconButton } from '../../components/ui/button';
 import { Field, Input, Select } from '../../components/ui/form';
 import { Alert, Card, CardHeader, PageHeader, PageSpinner, StatusPill } from '../../components/ui/misc';
 import { ConfirmDialog } from '../../components/ui/overlay';
+import { LogoMark } from '../../components/Logo';
 
 interface InstanceSettings {
   instanceName: string;
+  logoUrl: string | null;
+  faviconUrl: string | null;
   maxInboundMb: number;
   trashRetentionDays: number;
   spamRetentionDays: number;
@@ -67,6 +70,43 @@ function GeneralSettings() {
         <Field label="App address" hint="Used in webhook URLs and links. Set automatically at setup.">
           <Input value={s.appUrl ?? ''} onChange={(e) => set('appUrl', e.target.value)} placeholder="https://mail.example.com" />
         </Field>
+        <Field label="Logo URL" hint="Direct link to an SVG logo to replace the default icon.">
+          <div className="flex items-center gap-2.5">
+            <Input
+              value={s.logoUrl ?? ''}
+              onChange={(e) => set('logoUrl', e.target.value)}
+              placeholder="https://example.com/logo.svg"
+              className="flex-1"
+            />
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-subtle/50 p-1" title="Logo preview">
+              <LogoMark size={22} src={s.logoUrl?.trim() || null} />
+            </div>
+          </div>
+        </Field>
+        <Field label="Favicon URL" hint="Direct link to a favicon (SVG or image) for browser tabs.">
+          <div className="flex items-center gap-2.5">
+            <Input
+              value={s.faviconUrl ?? ''}
+              onChange={(e) => set('faviconUrl', e.target.value)}
+              placeholder="https://example.com/favicon.svg"
+              className="flex-1"
+            />
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-subtle/50 p-1" title="Favicon preview">
+              {s.faviconUrl?.trim() ? (
+                <img
+                  src={s.faviconUrl.trim()}
+                  alt=""
+                  className="h-5 w-5 object-contain"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLElement).style.display = 'none';
+                  }}
+                />
+              ) : (
+                <img src="/favicon.svg" alt="" className="h-5 w-5 object-contain" />
+              )}
+            </div>
+          </div>
+        </Field>
         <Field label="Largest message accepted" hint="Email Routing allows up to 25 MB. Bigger mail is rejected and the sender is told.">
           <Select value={s.maxInboundMb} onChange={(e) => set('maxInboundMb', Number(e.target.value))}>
             {[5, 10, 15, 20, 25].map((n) => (
@@ -118,8 +158,13 @@ function GeneralSettings() {
             run(
               'save',
               async () => {
-                const { version: _v, keyRotation: _k, appUrl, ...rest } = s;
-                await patch('/admin/settings', { ...rest, ...(appUrl ? { appUrl } : {}) });
+                const { version: _v, keyRotation: _k, appUrl, logoUrl, faviconUrl, ...rest } = s;
+                await patch('/admin/settings', {
+                  ...rest,
+                  appUrl: appUrl?.trim() || undefined,
+                  logoUrl: logoUrl?.trim() || null,
+                  faviconUrl: faviconUrl?.trim() || null,
+                });
                 await invalidate(['admin', 'settings'], ['session']);
               },
               'Settings saved',
