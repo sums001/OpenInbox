@@ -4,10 +4,11 @@ import type { Env } from '../env';
 import type { AppSettings } from '../db/settings';
 import { first, run } from '../db/db';
 import type { Cloudflare } from '../cloudflare/client';
-import { applyRecords } from '../cloudflare/dns';
+import { applyActions, applyRecords, type DnsAction } from '../cloudflare/dns';
 import { unquoteTxt } from '../cloudflare/spf';
-import { badRequest, HttpError } from '../lib/errors';
-import { bimiRecord, checkBimiSvg, checkCertificate, dmarcEnforced, isBimi } from '../mail/bimi';
+import { badRequest, errorMessage, HttpError } from '../lib/errors';
+import { BIMI_MAX_SVG, bimiRecord, checkBimiSvg, checkCertificate, dmarcEnforced, enforcedDmarc, isBimi } from '../mail/bimi';
+import { readLimited } from './sender-logos';
 import { getDomain, requireCf } from './domains';
 
 interface LogoRow {
@@ -20,7 +21,8 @@ export interface SenderLogo {
   logo: { url: string; certificateUrl: string | null; updatedAt: number } | null;
   // The default._bimi record OpenInbox wants, and what the zone has now.
   record: { name: string; expected: string | null; current: string | null };
-  dmarc: { record: string | null; enforced: boolean };
+  // fix: the record enforceDmarc would write, when the policy isn't enforced yet.
+  dmarc: { record: string | null; enforced: boolean; fix: string | null };
   // Mail apps fetch logos over HTTPS only.
   https: boolean;
 }
@@ -48,9 +50,28 @@ export async function getSenderLogo(env: Env, settings: AppSettings, base: strin
   return {
     logo,
     record: { name, expected: logo ? bimiRecord(logo.url, logo.certificateUrl) : null, current: bimi.find(isBimi) ?? null },
-    dmarc: { record: dmarcRecord, enforced: dmarcEnforced(dmarcRecord) },
+    dmarc: { record: dmarcRecord, enforced: dmarcEnforced(dmarcRecord), fix: dmarcEnforced(dmarcRecord) ? null : enforcedDmarc(dmarcRecord) },
     https: base.startsWith('https://'),
   };
+}
+
+// A logo at an address, such as the brand's site, for the dialog to preview and then save like an
+// uploaded file. The server fetches it because most sites don't let a browser read them from
+// another origin. It is stored, not linked, so a change at that address can't break the logo.
+export async function fetchLogo(url: string): Promise<string> {
+  if (!url.startsWith('https://')) throw badRequest('Use an https:// address.', 'invalid_logo');
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { accept: 'image/svg+xml' }, signal: AbortSignal.timeout(8000) });
+  } catch (e) {
+    throw badRequest(`The logo could not be loaded: ${errorMessage(e)}`, 'logo_unreachable');
+  }
+  if (!res.ok) throw badRequest(`The logo could not be loaded (HTTP ${res.status}).`, 'logo_unreachable');
+  const svg = await readLimited(res, BIMI_MAX_SVG);
+  if (svg === null) throw badRequest('The logo is larger than 32 KB, the size mail apps accept.', 'invalid_logo');
+  const problem = checkBimiSvg(svg);
+  if (problem) throw badRequest(problem, 'invalid_logo');
+  return svg;
 }
 
 // Leaving out the logo or the certificate keeps the stored one; a null certificate removes it.
@@ -76,6 +97,23 @@ export async function setSenderLogo(env: Env, settings: AppSettings, base: strin
   const [result] = await applyRecords(cf, d.zone_id, d.name, [{ type: 'TXT', name: 'default._bimi', content: bimiRecord(url, certificateUrl), purpose: 'bimi' }]);
   if (!result?.ok) throw new HttpError(502, 'dns_failed', `The logo is saved, but the default._bimi record could not be written: ${result?.message ?? 'unknown error'}`);
   return getSenderLogo(env, settings, base, d.id);
+}
+
+// Enforces the domain's DMARC policy, which mail apps need before they show the logo. Mail that
+// fails DMARC then goes to spam, so the admin confirms it in the dialog first.
+export async function enforceDmarc(env: Env, settings: AppSettings, domainId: number): Promise<SenderLogo['dmarc']> {
+  const d = await getDomain(env.DB, domainId);
+  const cf = await requireCf(env, settings);
+  const name = `_dmarc.${d.name}`;
+  const records = await cf.get<{ id: string; content: string }[]>(`/zones/${d.zone_id}/dns_records?type=TXT&name=${encodeURIComponent(name)}`);
+  const dmarc = records.filter((r) => /^v=DMARC1/i.test(unquoteTxt(r.content)));
+  if (dmarc.length > 1) throw badRequest(`${name} has ${dmarc.length} DMARC records, so receivers ignore them all. Keep one in Cloudflare DNS, then try again.`, 'dmarc_duplicate');
+  const content = enforcedDmarc(dmarc[0] ? unquoteTxt(dmarc[0].content) : null);
+  const spec = { type: 'TXT' as const, name: '_dmarc', content, purpose: 'dmarc' as const };
+  const action: DnsAction = dmarc[0] ? { op: 'update', spec, name, type: 'TXT', content, recordId: dmarc[0].id } : { op: 'create', spec, name, type: 'TXT', content };
+  const [result] = await applyActions(cf, d.zone_id, [action]);
+  if (!result?.ok) throw new HttpError(502, 'dns_failed', `The DMARC record could not be written: ${result?.message ?? 'unknown error'}`);
+  return { record: content, enforced: true, fix: null };
 }
 
 // Removes the logo and the domain's BIMI record, whoever wrote it: it would point nowhere.

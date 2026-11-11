@@ -92,6 +92,8 @@ export const domainPatchSchema = z.object({
 });
 export const appDomainSchema = z.object({ subdomain: z.string().trim().min(1).max(63).default('mail') });
 // The Worker checks the BIMI profile and the exact size limits (src/worker/mail/bimi.ts).
+export const logoUrlSchema = z.object({ url: z.string().trim().url().max(2000) });
+
 export const senderLogoSchema = z.object({ svg: z.string().min(1).max(40_000).optional(), certificate: z.string().max(70_000).nullable().optional() });
 
 export const providerSchema = z.object({
