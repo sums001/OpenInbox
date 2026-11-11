@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { renderSVG } from 'uqr';
-import { Bell, KeyRound, Laptop, Monitor, Moon, Shield, Sun, Trash } from 'lucide-react';
+import { Bell, KeyRound, Laptop, Monitor, Moon, Shield, Smartphone, Sun, Trash } from 'lucide-react';
 import { del, get, patch, post, errorText } from '../../lib/api';
 import { timeAgo } from '../../lib/format';
 import { useAction } from '../../lib/hooks';
@@ -11,8 +11,17 @@ import { storageGet, storageSet } from '../../lib/utils';
 import { Button } from '../../components/ui/button';
 import { Field, Input, PasswordInput, SegmentedControl, Switch } from '../../components/ui/form';
 import { Alert, Badge, Card, CardHeader, CopyButton, PageHeader } from '../../components/ui/misc';
-import { Dialog } from '../../components/ui/overlay';
+import { Dialog, useToast } from '../../components/ui/overlay';
 import { PasswordStrength } from '../../components/PasswordStrength';
+import {
+  getCurrentPushSubscription,
+  isIosDevice,
+  isPushSupported,
+  isStandalonePwa,
+  sendTestNotification,
+  subscribeToPush,
+  unsubscribeFromPush,
+} from '../../lib/push';
 
 // Each section is its own page in the settings sidebar.
 export function ProfileSettings() {
@@ -78,8 +87,23 @@ function Profile() {
 }
 
 function Appearance() {
+  const toast = useToast();
   const [theme, setTheme] = useTheme();
   const [notify, setNotify] = useState(storageGet('oi.notify', false));
+  const [pushSupported] = useState(() => isPushSupported());
+  const [isIos] = useState(() => isIosDevice());
+  const [isStandalone] = useState(() => isStandalonePwa());
+  const [pushActive, setPushActive] = useState<boolean | null>(null);
+  const [busyPush, setBusyPush] = useState(false);
+
+  useEffect(() => {
+    if (pushSupported) {
+      getCurrentPushSubscription()
+        .then((sub) => setPushActive(!!sub))
+        .catch(() => setPushActive(false));
+    }
+  }, [pushSupported]);
+
   const toggleNotify = async (on: boolean) => {
     if (on && 'Notification' in window && Notification.permission !== 'granted') {
       const p = await Notification.requestPermission();
@@ -88,10 +112,50 @@ function Appearance() {
     setNotify(on);
     storageSet('oi.notify', on);
   };
+
+  const handleTogglePush = async (enable: boolean) => {
+    setBusyPush(true);
+    try {
+      if (enable) {
+        const ok = await subscribeToPush();
+        if (ok) {
+          setPushActive(true);
+          toast.success('Push notifications enabled for this device.');
+        } else {
+          toast.error('Permission was not granted.');
+        }
+      } else {
+        await unsubscribeFromPush();
+        setPushActive(false);
+        toast.info('Push notifications disabled.');
+      }
+    } catch (e) {
+      toast.error(errorText(e));
+    } finally {
+      setBusyPush(false);
+    }
+  };
+
+  const handleTestPush = async () => {
+    setBusyPush(true);
+    try {
+      const sent = await sendTestNotification();
+      if (sent > 0) {
+        toast.success(`Test notification sent to ${sent} device${sent === 1 ? '' : 's'}.`);
+      } else {
+        toast.error('No active push subscriptions found on server.');
+      }
+    } catch (e) {
+      toast.error(errorText(e));
+    } finally {
+      setBusyPush(false);
+    }
+  };
+
   return (
     <Card>
       <CardHeader title="Theme and notifications" />
-      <div className="space-y-5 p-5">
+      <div className="space-y-6 p-5">
         <Field label="Theme">
           <SegmentedControl
             value={theme}
@@ -103,14 +167,56 @@ function Appearance() {
             ]}
           />
         </Field>
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <Bell className="h-4 w-4" /> Desktop notifications
+
+        <div className="border-t border-border pt-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Smartphone className="h-4 w-4" /> Phone & device push notifications
+              </div>
+              <div className="text-xs text-muted">
+                Receive real-time notifications even when OpenInbox and your browser are closed.
+              </div>
             </div>
-            <div className="text-xs text-muted">Notify about new inbox mail while OpenInbox is open in a background tab (this browser only).</div>
+            {pushSupported ? (
+              <Switch
+                checked={!!pushActive}
+                disabled={busyPush || (isIos && !isStandalone)}
+                onChange={handleTogglePush}
+                label="Push notifications"
+              />
+            ) : (
+              <Badge tone="neutral">Not supported</Badge>
+            )}
           </div>
-          <Switch checked={notify} onChange={toggleNotify} label="Desktop notifications" />
+
+          {isIos && !isStandalone && (
+            <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-200">
+              <strong>iPhone / iPad Notice:</strong> Safari only permits push notifications when added to your Home Screen.
+              Tap the <strong>Share</strong> button (square with arrow) and choose <strong>Add to Home Screen</strong>, then open OpenInbox from your Home Screen to enable notifications.
+            </div>
+          )}
+
+          {pushActive && (
+            <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-surface-2 p-3">
+              <div className="text-xs text-muted">Device registered for push notifications.</div>
+              <Button size="sm" variant="secondary" onClick={handleTestPush} disabled={busyPush}>
+                Send test notification
+              </Button>
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-border pt-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Bell className="h-4 w-4" /> In-tab desktop notifications
+              </div>
+              <div className="text-xs text-muted">Notify about new inbox mail while OpenInbox is open in a background tab (this browser only).</div>
+            </div>
+            <Switch checked={notify} onChange={toggleNotify} label="Desktop notifications" />
+          </div>
         </div>
       </div>
     </Card>

@@ -87,7 +87,15 @@ export function useMailSync(mailboxes: Mailbox[] | undefined) {
   const last = useRef<Record<string, number> | null>(null);
   const unreadRef = useRef<number>(0);
   useEffect(() => {
-    unreadRef.current = (mailboxes ?? []).reduce((n, m) => n + (m.unread.inbox ?? 0), 0);
+    const totalUnread = (mailboxes ?? []).reduce((n, m) => n + (m.unread.inbox ?? 0), 0);
+    unreadRef.current = totalUnread;
+    if ('setAppBadge' in navigator) {
+      if (totalUnread > 0) {
+        navigator.setAppBadge(totalUnread).catch(() => undefined);
+      } else {
+        navigator.clearAppBadge().catch(() => undefined);
+      }
+    }
   }, [mailboxes]);
   useEffect(() => {
     let stopped = false;

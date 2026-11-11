@@ -60,7 +60,7 @@ function GeneralSettings() {
   return (
     <Card>
       <CardHeader icon={<Settings />} title="General" />
-      <div className="grid gap-x-6 gap-y-[18px] px-5 pt-[18px] pb-5 md:grid-cols-2">
+      <div className="grid gap-x-6 gap-y-4.5 px-5 pt-4.5 pb-5 md:grid-cols-2">
         <Field label="Instance name" hint="Shown in the header and on the sign-in page.">
           <Input value={s.instanceName} onChange={(e) => set('instanceName', e.target.value)} />
         </Field>
@@ -220,7 +220,7 @@ function Suppressions() {
   return (
     <Card>
       <CardHeader title="Suppressed recipients" description="Addresses that bounced or marked your mail as spam. Sends to them are skipped, protecting your sender reputation." />
-      {q.data?.length === 0 && <div className="px-5 py-[22px] text-center text-[13px] text-muted">None. Delivery webhooks add addresses here automatically.</div>}
+      {q.data?.length === 0 && <div className="px-5 py-5.5 text-center text-[13px] text-muted">None. Delivery webhooks add addresses here automatically.</div>}
       {q.data?.map((s) => (
         <div key={s.address} className={row}>
           <div className="min-w-0 flex-1">
