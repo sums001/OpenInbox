@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router';
 import { useSession } from './lib/session';
 import { errorText } from './lib/api';
+import { storageGet } from './lib/utils';
 import { PageSpinner } from './components/ui/misc';
 import { Button } from './components/ui/button';
 import { SetupPage } from './pages/setup/SetupPage';
@@ -15,6 +16,12 @@ import { AppShell } from './components/layout/AppShell';
 const MailPage = lazy(() => import('./pages/mail/MailPage'));
 const AdminRoutes = lazy(() => import('./pages/admin/AdminRoutes'));
 const SettingsPage = lazy(() => import('./pages/settings/SettingsPage'));
+
+// Reads the saved start page on every visit to "/" (logo click, bare URL), so a changed setting applies immediately.
+function HomeRedirect({ isAdmin }: { isAdmin: boolean }) {
+  const home = isAdmin && storageGet<'admin' | 'mail'>('oi.homePage', 'admin') === 'admin' ? '/admin' : '/mail';
+  return <Navigate to={home} replace />;
+}
 
 export function App() {
   const { data: session, isLoading, error, refetch } = useSession();
@@ -55,7 +62,7 @@ export function App() {
           {isAdmin && <Route path="/admin/*" element={<AdminRoutes />} />}
           <Route path="/settings/*" element={<SettingsPage />} />
           <Route path="/login" element={<Navigate to="/" replace />} />
-          <Route path="*" element={<Navigate to={isAdmin ? '/admin' : '/mail'} replace />} />
+          <Route path="*" element={<HomeRedirect isAdmin={isAdmin} />} />
         </Route>
       </Routes>
     </Suspense>
