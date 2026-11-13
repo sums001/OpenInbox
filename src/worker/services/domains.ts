@@ -192,10 +192,16 @@ async function stepDmarc(cf: Cloudflare, d: DomainRow): Promise<string> {
   return 'Added v=DMARC1; p=none.';
 }
 
+// For a while after Email Routing is turned on, Cloudflare reports a status such as
+// "misconfigured/locked" with no DNS record missing, then "ready" on its own (#28). The step waits
+// instead of failing, and the client asks again.
+class RoutingSettling extends Error {}
+
 async function stepVerify(cf: Cloudflare, d: DomainRow, workerName: string): Promise<string> {
   const routing = await getRouting(cf, d.zone_id);
   if (routing.status !== 'ready') {
     const problems = await routingDnsProblems(cf, d.zone_id);
+    if (!problems.length) throw new RoutingSettling(`Cloudflare is still finishing Email Routing (status "${routing.status}"). This can take a minute.`);
     throw new Error(`Email Routing status is "${routing.status}". ${problems.join('. ')}`.trim());
   }
   const rule = await getCatchAll(cf, d.zone_id);
@@ -223,6 +229,12 @@ export async function runDomainStep(env: Env, settings: AppSettings, domainId: n
     const allDone = DOMAIN_STEPS.every((s) => state.steps[s.id]?.status === 'done' || state.steps[s.id]?.status === 'skipped');
     await saveState(env.DB, d, state, allDone ? 'active' : undefined);
   } catch (e) {
+    if (e instanceof RoutingSettling) {
+      state.steps[step] = { status: 'running', message: e.message, at: Date.now() };
+      await saveState(env.DB, d, state);
+      d = await getDomain(env.DB, domainId);
+      return { domain: d, ...domainStatePayload(d) };
+    }
     const message =
       e instanceof CfError && e.isAuth
         ? `Cloudflare refused this: the token needs ${STEP_PERMISSION[step]}. Edit the token in Cloudflare, then retry.`

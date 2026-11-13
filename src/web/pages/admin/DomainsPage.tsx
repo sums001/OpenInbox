@@ -5,6 +5,7 @@ import { del, get, patch, post, put, errorText } from '../../lib/api';
 import { timeAgo } from '../../lib/format';
 import { useAction, useInvalidate } from '../../lib/hooks';
 import { cn } from '../../lib/utils';
+import { runDomainSetup } from '../../lib/domain-setup';
 import { PROVIDER_INFO } from '../../../shared/constants';
 import type { DomainInfo, DomainSetupStep, MailboxAdmin, ProviderInfo, SenderLogo, ZoneInspection } from '../../lib/types';
 import { Button, IconButton } from '../../components/ui/button';
@@ -86,17 +87,6 @@ function StepList({ steps, running }: { steps: DomainSetupStep[]; running?: bool
   );
 }
 
-async function runSteps(domainId: number, onSteps: (s: DomainSetupStep[]) => void, reset = false): Promise<{ done: boolean; error?: string; step?: string }> {
-  for (let i = 0; i < 6; i++) {
-    const r = await post<{ steps: DomainSetupStep[]; done: boolean }>(`/admin/domains/${domainId}/setup${i === 0 && reset ? '?reset=1' : ''}`);
-    onSteps(r.steps);
-    if (r.done) return { done: true };
-    const failed = r.steps.find((s) => s.status === 'error');
-    if (failed) return { done: false, error: failed.message, step: failed.label };
-  }
-  return { done: false };
-}
-
 function Status({ icon, children }: { icon: ReactNode; children: ReactNode }) {
   return (
     <span className="flex items-center gap-[5px] whitespace-nowrap [&>svg]:h-[13px] [&>svg]:w-[13px]">
@@ -120,7 +110,7 @@ function DomainCard({ domain: d, mailboxes, providers, onChanged }: { domain: Do
   const finish = async () => {
     setRunning(true);
     try {
-      await runSteps(d.id, setSteps);
+      await runDomainSetup(d.id, setSteps);
     } finally {
       setRunning(false);
       onChanged();
@@ -649,7 +639,7 @@ function AddDomainDialog({ onClose, onAdded }: { onClose: () => void; onAdded: (
     setBusy(true);
     setError(null);
     try {
-      const r = await runSteps(id, setSteps);
+      const r = await runDomainSetup(id, setSteps);
       if (r.done) setDone(true);
       else if (r.error) setError({ message: r.error, step: r.step });
     } catch (e) {

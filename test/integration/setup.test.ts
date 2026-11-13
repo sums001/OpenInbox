@@ -163,6 +163,24 @@ describe('first-run setup', () => {
     expect(routing.message).toContain('Zone → Zone Settings → Edit');
   });
 
+  it('waits while Cloudflare finishes turning on Email Routing (#28)', async () => {
+    const c = new Client();
+    await c.init();
+    await c.get('/api/setup/status');
+    const r = await c.post('/api/setup/claim', { zoneId: 'zone_example', localPart: 'admin', displayName: 'Admin', password: 'correct horse battery', setupKey: ENCRYPTION_KEY });
+    for (let i = 0; i < 3; i++) await c.post(`/api/admin/domains/${r.domainId}/setup`);
+    // Just after it is turned on, Cloudflare reports a status other than ready with nothing missing.
+    fake.state.routing.zone_example.status = 'misconfigured/locked';
+    let state = await c.post(`/api/admin/domains/${r.domainId}/setup`);
+    expect(state.done).toBe(false);
+    expect(state.status).not.toBe('error');
+    expect(state.steps.find((s: { id: string }) => s.id === 'verify')).toMatchObject({ status: 'running', message: expect.stringContaining('misconfigured/locked') });
+
+    fake.state.routing.zone_example.status = 'ready';
+    state = await c.post(`/api/admin/domains/${r.domainId}/setup`);
+    expect(state).toMatchObject({ done: true, status: 'active' });
+  });
+
   it('leaves zone permissions untested, not missing, when the account has no domains', async () => {
     fake.state.zones = [];
     const c = new Client();
