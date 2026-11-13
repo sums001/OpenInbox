@@ -47,6 +47,7 @@ export function App() {
   if (user.mfaPending) return <TwoFactorPage />;
   if (user.mustChangePassword) return <ChangePasswordPage forced />;
   const isAdmin = user.role === 'owner' || user.role === 'admin';
+  const startPage = isAdmin && user.preferences?.startPage !== 'mail' ? '/admin' : '/mail';
   return (
     <Suspense fallback={<PageSpinner />}>
       <Routes>
@@ -55,7 +56,7 @@ export function App() {
           {isAdmin && <Route path="/admin/*" element={<AdminRoutes />} />}
           <Route path="/settings/*" element={<SettingsPage />} />
           <Route path="/login" element={<Navigate to="/" replace />} />
-          <Route path="*" element={<Navigate to={isAdmin ? '/admin' : '/mail'} replace />} />
+          <Route path="*" element={<Navigate to={startPage} replace />} />
         </Route>
       </Routes>
     </Suspense>
