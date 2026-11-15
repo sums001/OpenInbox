@@ -180,6 +180,22 @@ test('setup, send, receive, reply, search and isolate members', async ({ page, b
   await page.goto('/admin');
   await expect(page.getByText('Mail traffic')).toBeVisible();
 
+  // Start page preference: admins can choose to land on Mail instead of Admin.
+  await page.goto('/settings/profile');
+  await expect(page.getByText('Currently opens on Admin (/admin)')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Admin', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Mail', exact: true }).click();
+  await expect(page.getByText('Currently opens on Mail (/mail/all/inbox)')).toBeVisible();
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/mail\/all\/inbox$/);
+  await expect(page.getByText('Q4 planning agenda')).toBeVisible();
+  await page.goto('/settings/profile');
+  await page.getByRole('button', { name: 'Admin', exact: true }).click();
+  await expect(page.getByText('Currently opens on Admin (/admin)')).toBeVisible();
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/admin/);
+  await expect(page.getByText('Mail traffic')).toBeVisible();
+
   // 7. Bob signs in: forced password change, only his inbox, no admin.
   const bobCtx = await browser.newContext();
   const bob = await bobCtx.newPage();

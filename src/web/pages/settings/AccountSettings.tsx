@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { renderSVG } from 'uqr';
-import { Bell, KeyRound, Laptop, Monitor, Moon, Shield, Sun, Trash } from 'lucide-react';
-import { del, get, patch, post, errorText } from '../../lib/api';
+import { Bell, Inbox, KeyRound, Laptop, LayoutGrid, Monitor, Moon, Shield, Sun, Trash } from 'lucide-react';import { del, get, patch, post, errorText } from '../../lib/api';
 import { timeAgo } from '../../lib/format';
 import { useAction } from '../../lib/hooks';
 import { useRefreshSession, useUser } from '../../lib/session';
@@ -20,6 +19,7 @@ export function ProfileSettings() {
     <div className="space-y-6">
       <PageHeader title="Profile" description="Your name and sign-in email." />
       <Profile />
+      <StartPage />
     </div>
   );
 }
@@ -72,6 +72,40 @@ function Profile() {
             Save
           </Button>
         </div>
+      </div>
+    </Card>
+  );
+}
+
+function StartPage() {
+  const user = useUser();
+  const refresh = useRefreshSession();
+  const { run, busy } = useAction();
+  const isAdmin = user?.role === 'owner' || user?.role === 'admin';
+  if (!isAdmin) return null;
+  const value: 'admin' | 'mail' = user?.preferences?.startPage === 'mail' ? 'mail' : 'admin';
+  return (
+    <Card>
+      <CardHeader title="Start page" description="Where OpenInbox opens when you sign in or visit the home address." />
+      <div className="p-5">
+        <Field label="Default page">
+          <div className="flex flex-wrap items-center gap-3">
+            <SegmentedControl
+              value={value}
+              onChange={(startPage) => {
+                if (startPage === value || busy) return;
+                run('start-page', () => patch('/account', { preferences: { startPage } }).then(refresh), 'Saved');
+              }}
+              options={[
+                { value: 'admin', label: <span className="flex items-center gap-1.5"><LayoutGrid className="h-3.5 w-3.5" />Admin</span> },
+                { value: 'mail', label: <span className="flex items-center gap-1.5"><Inbox className="h-3.5 w-3.5" />Mail</span> },
+              ]}
+            />
+            <span className="text-xs text-muted">
+              Currently opens on <span className="font-medium text-fg">{value === 'mail' ? 'Mail (/mail/all/inbox)' : 'Admin (/admin)'}</span>
+            </span>
+          </div>
+        </Field>
       </div>
     </Card>
   );
