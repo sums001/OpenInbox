@@ -534,6 +534,8 @@ admin.get('/settings', async (c) => {
   const s = await settingsOf(c);
   return c.json({
     instanceName: s.instanceName,
+    logoUrl: s.logoUrl,
+    faviconUrl: s.faviconUrl,
     maxInboundMb: s.maxInboundMb,
     trashRetentionDays: s.trashRetentionDays,
     spamRetentionDays: s.spamRetentionDays,

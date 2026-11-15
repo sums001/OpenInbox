@@ -119,8 +119,29 @@ export const r2Schema = z.object({
   secretAccessKey: z.string().trim().min(10).max(200),
 });
 
+// A branding asset: an https: URL, or a path on this app ("/x", but not "//host" or "/\host").
+function isBrandingUrl(v: string): boolean {
+  if (v.startsWith('/')) return !v.startsWith('//') && !v.startsWith('/\\');
+  try {
+    return new URL(v).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+// '' or null clears the setting; a missing field stays missing so saving other settings leaves it alone.
+const brandingUrl = z
+  .string()
+  .trim()
+  .refine((v) => v === '' || isBrandingUrl(v), { message: 'Use an https:// URL or a path starting with /' })
+  .transform((v) => (v === '' ? null : v))
+  .nullable()
+  .optional();
+
 export const settingsSchema = z.object({
   instanceName: z.string().trim().min(1).max(60).optional(),
+  logoUrl: brandingUrl,
+  faviconUrl: brandingUrl,
   maxInboundMb: z.number().int().min(1).max(25).optional(),
   trashRetentionDays: z.number().int().min(1).max(3650).optional(),
   spamRetentionDays: z.number().int().min(1).max(3650).optional(),
