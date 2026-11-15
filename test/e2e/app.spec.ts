@@ -197,4 +197,18 @@ test('setup, send, receive, reply, search and isolate members', async ({ page, b
   const adminApi = await bob.request.get(`${APP}/api/admin/overview`);
   expect(adminApi.status()).toBe(403);
   await bobCtx.close();
+
+  // 8. Select all conversations: more than one page, archived in batches on the server.
+  for (let i = 0; i < 55; i++) {
+    expect(await deliver(mail({ from: 'News <news@acme.test>', to: 'admin@example.com', subject: `Weekly digest ${i}`, body: 'This week.', id: `digest-${i}@acme.test` }), 'news@acme.test', 'admin@example.com')).toBe(200);
+  }
+  await page.goto('/mail/all/inbox');
+  await expect(page.getByText('Weekly digest 54')).toBeVisible();
+  await page.getByRole('checkbox', { name: 'Select all' }).click();
+  await expect(page.getByText('All 50 loaded conversations are selected.')).toBeVisible();
+  await page.getByRole('button', { name: /Select all \d+ conversations in Inbox/ }).click();
+  await expect(page.getByText(/All \d+ conversations in Inbox are selected\./)).toBeVisible();
+  await page.getByRole('button', { name: 'Archive', exact: true }).click();
+  await expect(page.getByText(/Archived · \d+ conversations/)).toBeVisible();
+  await expect(page.getByText('Inbox zero')).toBeVisible();
 });

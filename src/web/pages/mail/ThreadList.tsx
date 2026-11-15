@@ -7,10 +7,10 @@ import type { Mailbox, ThreadSummary } from '../../lib/types';
 import { Button, IconButton } from '../../components/ui/button';
 import { Tick } from '../../components/ui/form';
 import { Avatar, Kbd, Skeleton } from '../../components/ui/misc';
-import { ConfirmDialog, Menu, MenuItem, MenuLabel, MenuSeparator, useToast } from '../../components/ui/overlay';
+import { ConfirmDialog, Menu, MenuItem, MenuLabel, MenuSeparator } from '../../components/ui/overlay';
 import { labelChip } from './labels';
 import { PickTimeDialog } from './PickTimeDialog';
-import { useThreadActions, useThreads, type Action } from './data';
+import { useThreadActions, useThreads, type Action, type ActionOpts, type BulkProgress } from './data';
 
 const OPERATORS: [string, string][] = [
   ['from:', 'Sender name or address'],
@@ -38,6 +38,11 @@ export function ThreadList({
   setFocusIndex,
   selected,
   setSelected,
+  allMatching,
+  setAllMatching,
+  matchCount,
+  progress,
+  onBulk,
   onOpen,
   onSearch,
   onMenu,
@@ -53,6 +58,11 @@ export function ThreadList({
   setFocusIndex: (i: number) => void;
   selected: Set<number>;
   setSelected: (s: Set<number>) => void;
+  allMatching: boolean;
+  setAllMatching: (v: boolean) => void;
+  matchCount: { count: number; capped: boolean } | null;
+  progress: BulkProgress | null;
+  onBulk: (action: Action, opts?: ActionOpts, label?: string, whole?: boolean) => void;
   onOpen: (t: ThreadSummary) => void;
   onSearch: (q: string) => void;
   onMenu: () => void;
@@ -61,7 +71,6 @@ export function ThreadList({
 }) {
   const q = useThreads(mailbox, view, query);
   const act = useThreadActions();
-  const toast = useToast();
   const [search, setSearch] = useState(query);
   const [searchOpen, setSearchOpen] = useState(false);
   const [recent, setRecent] = useState<string[]>(() => storageGet(RECENT_KEY, []));
@@ -104,23 +113,26 @@ export function ThreadList({
   };
 
   const ids = [...selected];
-  const bulk = (action: Action, opts: Parameters<typeof act>[2] = {}, label?: string) => {
-    if (!ids.length) return;
-    act(ids, action, opts)
-      .then(() => label && toast.success(label))
-      .catch(() => toast.error('Something went wrong.'));
-    setSelected(new Set());
+  const bulk = (action: Action, opts: ActionOpts = {}, label?: string) => {
+    // Deleting a whole view forever asks first, like Empty Trash.
+    if (allMatching && action === 'delete') setConfirmEmpty(true);
+    else onBulk(action, opts, label);
   };
   const toggle = (id: number) => {
-    const n = new Set(selected);
+    // Unticking one row while the whole view is selected keeps the loaded rows, like Gmail.
+    const n = new Set(allMatching ? list.map((t) => t.id) : selected);
     if (n.has(id)) n.delete(id);
     else n.add(id);
     setSelected(n);
   };
-  const allSelected = list.length > 0 && list.every((t) => selected.has(t.id));
+  const allSelected = allMatching || (list.length > 0 && list.every((t) => selected.has(t.id)));
   const title = view.startsWith('label-') ? (labelsById.get(Number(view.slice(6)))?.name ?? 'Label') : (VIEW_LABELS[view] ?? view);
   const mailboxName = mailbox === 'all' ? (mailboxes.length > 1 ? 'All inboxes' : '') : (mailboxes.find((m) => String(m.id) === mailbox)?.address ?? '');
   const heading = view === 'search' ? `Results for “${query}”` : title;
+  // The whole view can be selected once everything loaded is ticked and more remains on the server.
+  const offerAll = allSelected && !!q.hasNextPage && view !== 'search' && view !== 'scheduled';
+  const total = matchCount ? `${matchCount.count.toLocaleString()}${matchCount.capped ? '+' : ''}` : null;
+  const emptyCount = q.hasNextPage ? total : list.length.toLocaleString();
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -228,10 +240,10 @@ export function ThreadList({
         )}
       </div>
 
-      {ids.length ? (
+      {ids.length || allMatching ? (
         <div className="flex h-10 shrink-0 items-center gap-0.5 border-y border-border bg-primary-soft pr-2 pl-3.5 md:border-t-0">
           <Tick checked={allSelected} indeterminate={!allSelected} onChange={(v) => setSelected(v ? new Set(list.map((t) => t.id)) : new Set())} label="Select all" className="mr-2" />
-          <span className="flex-1 truncate text-[13px] font-semibold text-primary-text">{ids.length} selected</span>
+          <span className="flex-1 truncate text-[13px] font-semibold text-primary-text">{allMatching ? (total ? `All ${total} selected` : 'All selected') : `${ids.length} selected`}</span>
           <IconButton label="Archive" shortcut="E" onClick={() => bulk('archive', {}, 'Archived')} icon={<Archive />} className="h-7 w-7" />
           <IconButton
             label={view === 'trash' ? 'Delete forever' : 'Delete'}
@@ -270,6 +282,14 @@ export function ThreadList({
             </MenuItem>
           </Menu>
         </div>
+      ) : progress ? (
+        <div role="status" className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3.5 text-[13px] text-muted">
+          <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-primary-text" />
+          <span className="truncate">
+            {progress.verb} {progress.done.toLocaleString()}
+            {progress.total !== null && ` of ${progress.total.toLocaleString()}`}…
+          </span>
+        </div>
       ) : (
         // One heading for both layouts: large on phones, a compact list header on desktop.
         <div className="flex shrink-0 items-baseline gap-2.5 px-[18px] pt-1.5 pb-2.5 md:h-10 md:items-center md:border-b md:border-border md:pt-0 md:pr-2.5 md:pb-0 md:pl-3.5">
@@ -284,6 +304,28 @@ export function ThreadList({
             </Button>
           )}
           <IconButton label="Refresh" onClick={() => q.refetch()} icon={<RefreshCw className={cn(q.isFetching && 'animate-spin text-primary-text')} />} className="h-7 w-7 max-md:hidden" />
+        </div>
+      )}
+
+      {(offerAll || allMatching) && (
+        <div className="flex shrink-0 flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5 border-b border-border bg-surface-2 px-3.5 py-2 text-center text-[12.5px] text-muted">
+          {allMatching ? (
+            <>
+              <span>
+                All {total ? `${total} ` : ''}conversations in {title} are selected.
+              </span>
+              <button type="button" className="font-medium text-primary-text hover:underline" onClick={() => setSelected(new Set())}>
+                Clear selection
+              </button>
+            </>
+          ) : (
+            <>
+              <span>All {list.length.toLocaleString()} loaded conversations are selected.</span>
+              <button type="button" className="font-medium text-primary-text hover:underline" onClick={() => setAllMatching(true)}>
+                Select all {total ? `${total} ` : ''}conversations in {title}
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -347,7 +389,7 @@ export function ThreadList({
             {list.map((t, i) => {
               const unread = t.unreadCount > 0;
               const active = activeId === t.id;
-              const isSelected = selected.has(t.id);
+              const isSelected = allMatching || selected.has(t.id);
               const participants = view === 'sent' || view === 'drafts' ? participantLabel(t.participants, new Set()) : participantLabel(t.participants, own);
               const first = t.participants.find((p) => !own.has(p.address.toLowerCase())) ?? t.participants[0];
               const strong = unread || active;
@@ -459,13 +501,11 @@ export function ThreadList({
         confirmLabel="Delete forever"
         onConfirm={() => {
           setConfirmEmpty(false);
-          act(
-            list.map((t) => t.id),
-            'delete',
-          ).then(() => toast.success('Emptied'));
+          // Everything in the view, not only the loaded rows.
+          onBulk('delete', {}, 'Deleted forever', true);
         }}
       >
-        The {list.length} conversations here are deleted forever. This can't be undone.
+        {emptyCount ? `The ${emptyCount} conversations` : 'All conversations'} in {title} are deleted forever. This can't be undone.
       </ConfirmDialog>
     </div>
   );
