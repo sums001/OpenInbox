@@ -28,8 +28,11 @@ export function App() {
         link.rel = 'icon';
         document.head.appendChild(link);
       }
+      // A custom favicon may be PNG or ICO: let the browser detect the type.
+      link.removeAttribute('type');
       link.href = favicon;
     } else if (link && link.getAttribute('href') !== '/favicon.svg') {
+      link.type = 'image/svg+xml';
       link.href = '/favicon.svg';
     }
   }, [session?.faviconUrl]);
