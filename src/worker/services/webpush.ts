@@ -5,6 +5,7 @@ import { all, first, run } from '../db/db';
 import { loadSettings } from '../db/settings';
 import { decrypt, encrypt, fromBase64Url, toBase64Url } from '../lib/crypto';
 import { log, logError } from '../lib/log';
+import { isPushEndpoint } from '../../shared/schemas';
 
 export interface PushSubscriptionRow {
   id: number;
@@ -31,7 +32,8 @@ interface VapidKeys {
   privateKey: CryptoKey;
 }
 
-let cachedKeys: VapidKeys | null = null;
+// The imported key, reused while the stored (encrypted) value is unchanged.
+let cachedKeys: (VapidKeys & { stored: string }) | null = null;
 
 function concatBytes(...arrays: Uint8Array[]): Uint8Array {
   const total = arrays.reduce((acc, curr) => acc + curr.length, 0);
@@ -44,60 +46,39 @@ function concatBytes(...arrays: Uint8Array[]): Uint8Array {
   return out;
 }
 
-export async function getOrGenerateVapidKeys(env: Env): Promise<VapidKeys> {
-  if (cachedKeys) return cachedKeys;
-
+async function storedKeys(env: Env): Promise<{ pub?: string; priv?: string }> {
   const rows = await all<{ key: string; value: string }>(
     env.DB,
     "SELECT key, value FROM settings WHERE key IN ('vapid.public_key', 'vapid.private_key')",
   );
   const map = new Map(rows.map((r) => [r.key, r.value]));
+  return { pub: map.get('vapid.public_key'), priv: map.get('vapid.private_key') };
+}
 
-  const pub = map.get('vapid.public_key');
-  const privEnc = map.get('vapid.private_key');
-
-  if (pub && privEnc) {
-    try {
-      const privJson = await decrypt(env, privEnc);
-      const jwk = JSON.parse(privJson) as JsonWebKey;
-      const privateKey = await crypto.subtle.importKey(
-        'jwk',
-        jwk,
-        { name: 'ECDSA', namedCurve: 'P-256' },
-        false,
-        ['sign'],
-      );
-      cachedKeys = { publicKey: pub, privateKey };
-      return cachedKeys;
-    } catch (e) {
-      logError('vapid.load_failed', e);
-    }
+// The instance's VAPID key pair, generated on first use. Every browser subscription is bound to
+// the public key, so the pair is never replaced on its own: if the private key can't be decrypted
+// (ENCRYPTION_KEY changed without a re-encrypt), this throws instead.
+export async function getOrGenerateVapidKeys(env: Env): Promise<VapidKeys> {
+  let { pub, priv } = await storedKeys(env);
+  if (!pub || !priv) {
+    log('vapid.generating_keys');
+    const keyPair = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])) as CryptoKeyPair;
+    const rawPub = new Uint8Array((await crypto.subtle.exportKey('raw', keyPair.publicKey)) as ArrayBuffer);
+    const privEncrypted = await encrypt(env, JSON.stringify(await crypto.subtle.exportKey('jwk', keyPair.privateKey)));
+    const now = Date.now();
+    // DO NOTHING: when two isolates generate at once, the first pair written wins for both.
+    const insert = 'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT (key) DO NOTHING';
+    await env.DB.batch([
+      env.DB.prepare(insert).bind('vapid.public_key', toBase64Url(rawPub), now),
+      env.DB.prepare(insert).bind('vapid.private_key', privEncrypted, now),
+    ]);
+    ({ pub, priv } = await storedKeys(env));
+    if (!pub || !priv) throw new Error('VAPID keys could not be stored.');
   }
-
-  // Generate a new ECDSA P-256 key pair
-  log('vapid.generating_keys');
-  const keyPair = (await crypto.subtle.generateKey(
-    { name: 'ECDSA', namedCurve: 'P-256' },
-    true,
-    ['sign', 'verify'],
-  )) as CryptoKeyPair;
-
-  const rawPub = new Uint8Array((await crypto.subtle.exportKey('raw', keyPair.publicKey)) as ArrayBuffer);
-  const publicKey = toBase64Url(rawPub);
-  const privJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
-  const privEncrypted = await encrypt(env, JSON.stringify(privJwk));
-
-  const now = Date.now();
-  await env.DB.batch([
-    env.DB.prepare(
-      'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
-    ).bind('vapid.public_key', publicKey, now),
-    env.DB.prepare(
-      'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
-    ).bind('vapid.private_key', privEncrypted, now),
-  ]);
-
-  cachedKeys = { publicKey, privateKey: keyPair.privateKey };
+  if (cachedKeys?.stored === priv && cachedKeys.publicKey === pub) return cachedKeys;
+  const jwk = JSON.parse(await decrypt(env, priv)) as JsonWebKey;
+  const privateKey = await crypto.subtle.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+  cachedKeys = { publicKey: pub, privateKey, stored: priv };
   return cachedKeys;
 }
 
@@ -205,6 +186,11 @@ async function encryptPayload(clientP256dh: string, clientAuth: string, payload:
 }
 
 export async function sendWebPush(env: Env, sub: PushSubscriptionRow, payload: PushPayload): Promise<boolean> {
+  // Routes validate endpoints already; this keeps any other row from reaching fetch().
+  if (!isPushEndpoint(sub.endpoint)) {
+    log('webpush.endpoint_refused', { id: sub.id });
+    return false;
+  }
   try {
     const { publicKey, privateKey } = await getOrGenerateVapidKeys(env);
     const subject = await getVapidSubject(env);
@@ -253,6 +239,7 @@ export async function notifyMailboxMembers(env: Env, mailboxId: number, payload:
     `SELECT s.id, s.user_id, s.endpoint, s.p256dh, s.auth, s.created_at, s.last_used_at
      FROM push_subscriptions s
      JOIN mailbox_members m ON m.user_id = s.user_id
+     JOIN users u ON u.id = s.user_id AND u.status = 'active'
      WHERE m.mailbox_id = ?`,
     mailboxId,
   );
@@ -265,7 +252,7 @@ export async function notifyMailboxMembers(env: Env, mailboxId: number, payload:
 export async function notifyUser(env: Env, userId: number, payload: PushPayload): Promise<number> {
   const subscriptions = await all<PushSubscriptionRow>(
     env.DB,
-    'SELECT * FROM push_subscriptions WHERE user_id = ?',
+    "SELECT s.* FROM push_subscriptions s JOIN users u ON u.id = s.user_id AND u.status = 'active' WHERE s.user_id = ?",
     userId,
   );
   if (!subscriptions.length) return 0;
