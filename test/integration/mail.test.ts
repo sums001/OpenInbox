@@ -392,3 +392,80 @@ describe('sending', () => {
     expect(await admin.get('/api/admin/providers')).toHaveLength(0);
   });
 });
+
+describe('import and export', () => {
+  let admin: Client;
+  beforeEach(async () => {
+    useFakeApis();
+    admin = new Client();
+    await setupInstance(admin);
+  });
+
+  it('routes imported mail to folders, creates comma-safe sanitized labels, sets stars, and exports raw mail', async () => {
+    const boxes = await admin.get('/api/mailboxes');
+    const box = boxes[0];
+    const enc = new TextEncoder();
+
+    const importEml = async (query: string, eml: string) => {
+      const res = await admin.request('POST', `/api/mailboxes/${box.id}/import?${query}`, enc.encode(eml.replace(/\r?\n/g, '\r\n')), {
+        'Content-Type': 'message/rfc822',
+      });
+      expect(res.status).toBe(200);
+      return res.json() as Promise<{ status: string; threadId?: number; messageId?: number }>;
+    };
+
+    // 1. Inbox + starred + custom labels (including comma in label, control chars, case dedupe)
+    const r1 = await importEml(
+      'folder=inbox&starred=1&label=Sales%2C%20Q1&label=sales%2C%20q1&label=Tax%0A2025',
+      email({ subject: 'Q1 Order', messageId: 'imp1@sender.test', body: 'Order received.' }),
+    );
+    expect(r1.status).toBe('delivered');
+
+    // 2. Sibling Sent-only message in the same thread routed to archive must NOT downgrade inbox -> archive
+    const r2 = await importEml(
+      'folder=archive',
+      email({ subject: 'Re: Q1 Order', messageId: 'imp2@sender.test', inReplyTo: 'imp1@sender.test', references: '<imp1@sender.test>', body: 'Reply body.' }),
+    );
+    expect(r2.threadId).toBe(r1.threadId);
+
+    // 3. Trash and Spam folders + invalid folder fallback to archive
+    await importEml('folder=trash', email({ subject: 'Deleted note', messageId: 'imp3@sender.test' }));
+    await importEml('folder=spam', email({ subject: 'Junk mail', messageId: 'imp4@sender.test' }));
+    await importEml('folder=bogus', email({ subject: 'Archived fallback', messageId: 'imp5@sender.test' }));
+
+    // 4. Duplicate skipped
+    const dup = await importEml('folder=inbox', email({ subject: 'Q1 Order', messageId: 'imp1@sender.test' }));
+    expect(dup.status).toBe('duplicate');
+
+    const inbox = await admin.get('/api/threads?mailbox=all&view=inbox');
+    expect(inbox.threads).toHaveLength(1);
+    expect(inbox.threads[0]).toMatchObject({ id: r1.threadId, starred: true, unreadCount: 0 });
+
+    const mailboxesAfter = await admin.get('/api/mailboxes');
+    const labelNames = mailboxesAfter[0].labels.map((l: { name: string }) => l.name).sort();
+    expect(labelNames).toEqual(['Sales, Q1', 'Tax 2025']);
+
+    expect((await admin.get('/api/threads?mailbox=all&view=trash')).threads.map((t: { subject: string }) => t.subject)).toEqual(['Deleted note']);
+    expect((await admin.get('/api/threads?mailbox=all&view=spam')).threads.map((t: { subject: string }) => t.subject)).toEqual(['Junk mail']);
+    expect((await admin.get('/api/threads?mailbox=all&view=archive')).threads.map((t: { subject: string }) => t.subject)).toEqual(['Archived fallback']);
+
+    // Export lists all non-draft messages and raw endpoint returns .eml
+    const exp = await admin.get(`/api/mailboxes/${box.id}/export?after=0`);
+    expect(exp.messages).toHaveLength(5);
+    const rawRes = await admin.request('GET', `/api/messages/${exp.messages[0].id}/raw`);
+    expect(rawRes.status).toBe(200);
+    expect(await rawRes.text()).toContain('Q1 Order');
+
+    // Another user without membership cannot import into admin's mailbox
+    const adminBoxes = await admin.get('/api/admin/mailboxes');
+    const created = await admin.post('/api/admin/users', { name: 'Bob', role: 'member', newMailbox: { localPart: 'bob', domainId: adminBoxes[0].domainId } });
+    const bob = new Client();
+    await bob.init();
+    await bob.post('/api/auth/login', { email: 'bob@example.com', password: created.password });
+    await bob.post('/api/account/password', { next: 'bobs new password 1' });
+    const unauth = await bob.request('POST', `/api/mailboxes/${box.id}/import?folder=inbox`, enc.encode(email({ subject: 'Sneaky' })), {
+      'Content-Type': 'message/rfc822',
+    });
+    expect(unauth.status).toBe(404);
+  });
+});

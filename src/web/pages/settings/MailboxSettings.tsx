@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router';
 import { zipSync } from 'fflate';
 import { CalendarClock, Download, FileUp, Funnel, PenLine, Plus, Tag, Trash, Forward, Archive } from 'lucide-react';
-import { del, get, patch, post, put, api, errorText } from '../../lib/api';
+import { del, get, patch, post, put, api, ApiError, errorText } from '../../lib/api';
 import { useAction, useInvalidate } from '../../lib/hooks';
 import { cleanSignature } from '../../lib/sanitize';
 import { cn, downloadBlob } from '../../lib/utils';
@@ -374,156 +374,223 @@ function FilterDialog({ box, filter, onClose, onSaved }: { box: Mailbox; filter:
   );
 }
 
+const MAX_IMPORT_BYTES = 25 * 1024 * 1024;
+
+function buildImportParams(folder: string, customLabels: string[], isStarred: boolean): URLSearchParams {
+  const params = new URLSearchParams({ folder });
+  for (const label of customLabels) {
+    params.append('label', label);
+  }
+  if (isStarred) {
+    params.set('starred', '1');
+  }
+  return params;
+}
+
 function ImportExport({ box }: { box: Mailbox }) {
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
   const invalidate = useInvalidate();
+
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
+
+  const startController = () => {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    return ctrl;
+  };
 
   const importFiles = async (files: FileList) => {
     setError('');
     setIsProcessing(true);
+    const ctrl = startController();
     let done = 0;
     let dupes = 0;
     let errors = 0;
+    let lastError = '';
 
     try {
       for (const file of Array.from(files)) {
-        if (file.name.toLowerCase().endsWith('.mbox')) {
+        if (ctrl.signal.aborted) break;
+        const isMbox = file.name.toLowerCase().endsWith('.mbox') || file.type === 'application/mbox';
+        if (isMbox) {
           // Stream-parse mbox archive in constant browser memory
           for await (const msg of streamMbox(file, 2 * 1024 * 1024, (read, total) => {
-            const pct = Math.round((read / total) * 100);
+            if (ctrl.signal.aborted) return;
+            const pct = total > 0 ? Math.round((read / total) * 100) : 100;
             setProgress(`Scanning ${file.name} (${pct}%) — ${done} imported…`);
           })) {
+            if (ctrl.signal.aborted) break;
+            if (msg.oversized || msg.bytes.byteLength > MAX_IMPORT_BYTES) {
+              errors++;
+              lastError = `${file.name} #${msg.index}: Files over 25 MB cannot be imported.`;
+              continue;
+            }
             try {
               const folderLabel = msg.targetFolder === 'inbox' ? 'Inbox' : msg.targetFolder === 'trash' ? 'Trash' : msg.targetFolder === 'spam' ? 'Spam' : 'Archive';
               setProgress(`Importing message ${msg.index} (${folderLabel}) from ${file.name}…`);
-              
-              const params = new URLSearchParams({ folder: msg.targetFolder });
-              if (msg.customLabels.length > 0) {
-                params.set('labels', msg.customLabels.join(','));
-              }
-              if (msg.isStarred) {
-                params.set('starred', '1');
-              }
 
+              const params = buildImportParams(msg.targetFolder, msg.customLabels, msg.isStarred);
               const r = await api<{ status: string }>(`/mailboxes/${box.id}/import?${params}`, {
                 raw: new Blob([msg.bytes as BlobPart], { type: 'message/rfc822' }),
                 headers: { 'Content-Type': 'message/rfc822' },
+                signal: ctrl.signal,
               });
               if (r.status === 'duplicate') dupes++;
               done++;
             } catch (e) {
+              if (ctrl.signal.aborted) break;
+              if (e instanceof ApiError && (e.status === 401 || e.status === 403)) throw e;
               errors++;
-              console.error('Import error for message', msg.index, e);
+              lastError = `${file.name} #${msg.index}: ${errorText(e)}`;
             }
           }
         } else {
           // Standard single .eml file
+          if (file.size > MAX_IMPORT_BYTES) {
+            errors++;
+            lastError = `${file.name}: Files over 25 MB cannot be imported.`;
+            continue;
+          }
           setProgress(`Importing ${done + 1} of ${files.length}…`);
           try {
-            const arrayBuf = await file.arrayBuffer();
-            const labelsInfo = parseGmailLabels(new Uint8Array(arrayBuf));
-            const params = new URLSearchParams({ folder: labelsInfo.targetFolder });
-            if (labelsInfo.customLabels.length > 0) {
-              params.set('labels', labelsInfo.customLabels.join(','));
-            }
-            if (labelsInfo.isStarred) {
-              params.set('starred', '1');
-            }
+            const headerSlice = await file.slice(0, 65536).arrayBuffer();
+            const labelsInfo = parseGmailLabels(new Uint8Array(headerSlice));
+            const params = buildImportParams(labelsInfo.targetFolder, labelsInfo.customLabels, labelsInfo.isStarred);
 
             const r = await api<{ status: string }>(`/mailboxes/${box.id}/import?${params}`, {
               raw: file,
               headers: { 'Content-Type': 'message/rfc822' },
+              signal: ctrl.signal,
             });
             if (r.status === 'duplicate') dupes++;
             done++;
           } catch (e) {
+            if (ctrl.signal.aborted) break;
+            if (e instanceof ApiError && (e.status === 401 || e.status === 403)) throw e;
             errors++;
-            setError(`${file.name}: ${errorText(e)}`);
+            lastError = `${file.name}: ${errorText(e)}`;
           }
         }
       }
 
-      const imported = done - dupes;
-      setProgress(
-        `Import complete: ${imported} message${imported === 1 ? '' : 's'} imported` +
-        (dupes ? ` (${dupes} duplicates skipped)` : '') +
-        (errors ? `, ${errors} failed.` : '.')
-      );
-      invalidate(['threads'], ['mailboxes']);
+      if (!ctrl.signal.aborted) {
+        if (lastError) setError(errors > 1 ? `${lastError} (${errors} failed total)` : lastError);
+        const imported = done - dupes;
+        setProgress(
+          `Import complete: ${imported} message${imported === 1 ? '' : 's'} imported` +
+            (dupes ? ` (${dupes} duplicates skipped)` : '') +
+            (errors ? `, ${errors} failed.` : '.'),
+        );
+        invalidate(['threads'], ['mailboxes']);
+      }
     } catch (e) {
-      setError(errorText(e));
+      if (!ctrl.signal.aborted) setError(errorText(e));
     } finally {
-      setIsProcessing(false);
+      if (abortRef.current === ctrl) setIsProcessing(false);
     }
   };
+
+  type ExportMessageMeta = { id: number; subject: string; sent_at: number };
+
+  const collectExport = async (
+    label: string,
+    onMessage: (meta: ExportMessageMeta, raw: Uint8Array) => void,
+    signal: AbortSignal,
+  ): Promise<{ exported: number; failed: number }> => {
+    let after = 0;
+    let exported = 0;
+    let failed = 0;
+
+    for (;;) {
+      if (signal.aborted) break;
+      const page = await get<{ messages: ExportMessageMeta[]; next: number | null }>(
+        `/mailboxes/${box.id}/export?after=${after}`,
+        signal,
+      );
+      for (const m of page.messages) {
+        if (signal.aborted) break;
+        setProgress(`${label} message ${exported + failed + 1}…`);
+        const res = await fetch(`/api/messages/${m.id}/raw`, { credentials: 'same-origin', signal });
+        if (res.status === 401 || res.status === 403) {
+          throw new ApiError(res.status, 'auth', `Export stopped (${res.status}). Please sign in again.`);
+        }
+        if (!res.ok) {
+          failed++;
+          continue;
+        }
+        const raw = new Uint8Array(await res.arrayBuffer());
+        onMessage(m, raw);
+        exported++;
+      }
+      if (!page.next) break;
+      after = page.next;
+    }
+    return { exported, failed };
+  };
+
+  const safeAddress = box.address.replace(/[^\w.@+-]+/g, '_');
 
   const exportMbox = async () => {
     setError('');
     setIsProcessing(true);
-    let after = 0;
-    let count = 0;
+    const ctrl = startController();
     const mboxParts: Uint8Array[] = [];
 
     try {
-      for (;;) {
-        const page = await get<{ messages: { id: number; subject: string; sent_at: number }[]; next: number | null }>(
-          `/mailboxes/${box.id}/export?after=${after}`
-        );
-        for (const m of page.messages) {
-          setProgress(`Exporting message ${++count}…`);
-          const res = await fetch(`/api/messages/${m.id}/raw`, { credentials: 'same-origin' });
-          if (!res.ok) continue;
-          const raw = new Uint8Array(await res.arrayBuffer());
+      const { exported, failed } = await collectExport(
+        'Exporting',
+        (m, raw) => {
           mboxParts.push(formatMboxEntry(raw, new Date(m.sent_at), box.address));
-        }
-        if (!page.next) break;
-        after = page.next;
-      }
+        },
+        ctrl.signal,
+      );
+      if (ctrl.signal.aborted) return;
 
       setProgress('Generating .mbox file…');
       const blob = new Blob(mboxParts as BlobPart[], { type: 'application/mbox' });
-      downloadBlob(blob, `${box.address}-${new Date().toISOString().slice(0, 10)}.mbox`);
-      setProgress(`Exported ${count} messages to .mbox.`);
+      downloadBlob(blob, `${safeAddress}-${new Date().toISOString().slice(0, 10)}.mbox`);
+      setProgress(`Exported ${exported} message${exported === 1 ? '' : 's'} to .mbox${failed ? ` (${failed} failed).` : '.'}`);
+      if (failed > 0) setError(`${failed} message${failed === 1 ? '' : 's'} could not be downloaded and were omitted from the export.`);
     } catch (e) {
-      setError(errorText(e));
+      if (!ctrl.signal.aborted) setError(errorText(e));
     } finally {
-      setIsProcessing(false);
+      if (abortRef.current === ctrl) setIsProcessing(false);
     }
   };
 
   const exportZip = async () => {
     setError('');
     setIsProcessing(true);
+    const ctrl = startController();
     const files: Record<string, Uint8Array> = {};
-    let after = 0;
-    let count = 0;
 
     try {
-      for (;;) {
-        const page = await get<{ messages: { id: number; subject: string; sent_at: number }[]; next: number | null }>(
-          `/mailboxes/${box.id}/export?after=${after}`
-        );
-        for (const m of page.messages) {
-          setProgress(`Downloading message ${++count}…`);
-          const res = await fetch(`/api/messages/${m.id}/raw`, { credentials: 'same-origin' });
-          if (!res.ok) continue;
+      const { exported, failed } = await collectExport(
+        'Downloading',
+        (m, raw) => {
           const date = new Date(m.sent_at).toISOString().slice(0, 10);
           const name = `${date}-${m.id}-${(m.subject || 'message').replace(/[^\w -]+/g, '').trim().slice(0, 50)}.eml`;
-          files[name] = new Uint8Array(await res.arrayBuffer());
-        }
-        if (!page.next) break;
-        after = page.next;
-      }
+          files[name] = raw;
+        },
+        ctrl.signal,
+      );
+      if (ctrl.signal.aborted) return;
+
       setProgress('Creating zip…');
       const zip = zipSync(files, { level: 6 });
-      downloadBlob(new Blob([zip as BlobPart], { type: 'application/zip' }), `${box.address}-${new Date().toISOString().slice(0, 10)}.zip`);
-      setProgress(`Exported ${count} messages to .zip.`);
+      downloadBlob(new Blob([zip as BlobPart], { type: 'application/zip' }), `${safeAddress}-${new Date().toISOString().slice(0, 10)}.zip`);
+      setProgress(`Exported ${exported} message${exported === 1 ? '' : 's'} to .zip${failed ? ` (${failed} failed).` : '.'}`);
+      if (failed > 0) setError(`${failed} message${failed === 1 ? '' : 's'} could not be downloaded and were omitted from the export.`);
     } catch (e) {
-      setError(errorText(e));
+      if (!ctrl.signal.aborted) setError(errorText(e));
     } finally {
-      setIsProcessing(false);
+      if (abortRef.current === ctrl) setIsProcessing(false);
     }
   };
 

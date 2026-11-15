@@ -112,6 +112,7 @@ export function readParsed(s: ScanResult, envelopeFrom: string): ParsedMessage {
 
 interface ThreadMatch {
   id: number;
+  folder: string;
   participants: string;
 }
 
@@ -124,14 +125,14 @@ export async function findThread(db: D1Database, mailboxId: number, p: ParsedMes
       mailboxId,
       ...ids,
     );
-    if (hit) return first<ThreadMatch>(db, 'SELECT id, participants FROM threads WHERE id = ?', hit.thread_id);
+    if (hit) return first<ThreadMatch>(db, 'SELECT id, folder, participants FROM threads WHERE id = ?', hit.thread_id);
   }
   // Fallback: same normalized subject and a shared participant within 30 days.
   const norm = normalizeSubject(p.subject);
   if (norm.length < 3) return null;
   const candidates = await all<ThreadMatch>(
     db,
-    'SELECT id, participants FROM threads WHERE mailbox_id = ? AND subject_norm = ? AND last_message_at > ? ORDER BY last_message_at DESC LIMIT 5',
+    'SELECT id, folder, participants FROM threads WHERE mailbox_id = ? AND subject_norm = ? AND last_message_at > ? ORDER BY last_message_at DESC LIMIT 5',
     mailboxId,
     norm,
     Date.now() - 30 * DAY,
@@ -264,6 +265,11 @@ export async function ingest(c: Context, bytes: Uint8Array, o: IngestOptions): P
   const folder = spamReason ? 'spam' : (actions.folder ?? o.folderOverride ?? 'inbox');
   const isRead = actions.markRead || o.markRead ? 1 : 0;
   const thread = await findThread(env.DB, mailboxId, p);
+  // Don't let an imported sibling message (e.g. Sent-only copy routed to archive) hide an inbox thread.
+  const nextFolder =
+    thread && o.folderOverride && !actions.folder && !spamReason && thread.folder === 'inbox' && folder === 'archive'
+      ? 'inbox'
+      : folder;
   const threadId = thread?.id ?? newId();
   const messageId = newId();
   const snippet = makeSnippet(p.text);
@@ -289,7 +295,7 @@ export async function ingest(c: Context, bytes: Uint8Array, o: IngestOptions): P
              unread_count = unread_count + ?, has_attachments = MAX(has_attachments, ?), starred = MAX(starred, ?),
              last_message_at = MAX(last_message_at, ?), last_inbound_at = ?, snoozed_until = NULL, updated_at = ? WHERE id = ?`,
         )
-        .bind(folder, snippet, JSON.stringify(participants), isRead ? 0 : 1, hasAttachments ? 1 : 0, actions.star ? 1 : 0, sortTime, now, now, threadId),
+        .bind(nextFolder, snippet, JSON.stringify(participants), isRead ? 0 : 1, hasAttachments ? 1 : 0, actions.star ? 1 : 0, sortTime, now, now, threadId),
     );
   } else {
     stmts.push(

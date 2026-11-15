@@ -441,6 +441,23 @@ mail.post('/blocked', async (c) => {
   return c.json({ ok: true });
 });
 
+function sanitizeImportLabels(repeated: string[], csv: string | undefined): string[] {
+  const raw = repeated.length ? repeated : csv ? csv.split(',') : [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    // eslint-disable-next-line no-control-regex
+    const name = item.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60).trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
 // Import: one .eml per request (the web app sends files one by one).
 mail.post('/mailboxes/:id/import', async (c) => {
   const user = currentUser(c);
@@ -466,27 +483,39 @@ mail.post('/mailboxes/:id/import', async (c) => {
     markRead: true,
   });
 
-  // Attach custom labels if provided
-  const labelsQuery = c.req.query('labels');
-  if (r.threadId && labelsQuery) {
-    const rawNames = labelsQuery.split(',').map((s) => s.trim()).filter(Boolean);
-    const labelNames = Array.from(new Set(rawNames)).slice(0, 10); // cap to 10 labels per message
-    for (const name of labelNames) {
-      let label = await first<{ id: number }>(c.env.DB, 'SELECT id FROM labels WHERE mailbox_id = ? AND name = ? COLLATE NOCASE', mailboxId, name);
-      if (!label) {
-        const id = newId();
-        await run(c.env.DB, 'INSERT OR IGNORE INTO labels (id, mailbox_id, name, color, created_at) VALUES (?, ?, ?, ?, ?)', id, mailboxId, name, 'slate', Date.now());
-        label = await first<{ id: number }>(c.env.DB, 'SELECT id FROM labels WHERE mailbox_id = ? AND name = ? COLLATE NOCASE', mailboxId, name);
-      }
-      if (label) {
-        await run(c.env.DB, 'INSERT OR IGNORE INTO thread_labels (thread_id, label_id) VALUES (?, ?)', r.threadId, label.id);
+  if (r.threadId) {
+    const labelNames = sanitizeImportLabels(c.req.queries('label') ?? [], c.req.query('labels'));
+    const starred = c.req.query('starred') === '1';
+    const stmts: D1PreparedStatement[] = [];
+    const now = Date.now();
+
+    if (labelNames.length > 0) {
+      const existing = await all<{ id: number; name: string }>(c.env.DB, 'SELECT id, name FROM labels WHERE mailbox_id = ?', mailboxId);
+      const byLower = new Map(existing.map((l) => [l.name.toLowerCase(), l.id]));
+
+      for (const name of labelNames) {
+        const existingId = byLower.get(name.toLowerCase());
+        if (existingId) {
+          stmts.push(c.env.DB.prepare('INSERT OR IGNORE INTO thread_labels (thread_id, label_id) VALUES (?, ?)').bind(r.threadId, existingId));
+        } else {
+          stmts.push(
+            c.env.DB.prepare('INSERT OR IGNORE INTO labels (id, mailbox_id, name, color, created_at) VALUES (?, ?, ?, ?, ?)').bind(newId(), mailboxId, name, 'slate', now),
+            c.env.DB
+              .prepare('INSERT OR IGNORE INTO thread_labels (thread_id, label_id) SELECT ?, id FROM labels WHERE mailbox_id = ? AND name = ? COLLATE NOCASE LIMIT 1')
+              .bind(r.threadId, mailboxId, name),
+          );
+        }
       }
     }
-  }
 
-  // Handle starred flag if provided
-  if (r.threadId && c.req.query('starred') === '1') {
-    await run(c.env.DB, 'UPDATE threads SET starred = 1 WHERE id = ?', r.threadId);
+    if (starred) {
+      stmts.push(c.env.DB.prepare('UPDATE threads SET starred = 1, updated_at = ? WHERE id = ? AND mailbox_id = ?').bind(now, r.threadId, mailboxId));
+    }
+
+    if (stmts.length > 0) {
+      stmts.push(bumpState(c.env.DB, mailboxId));
+      await c.env.DB.batch(stmts);
+    }
   }
 
   return c.json(r);
