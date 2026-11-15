@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlarmClock,
@@ -50,7 +50,7 @@ import type { Attachment, Mailbox, Message, ThreadDetail } from '../../lib/types
 import { labelChip, labelDot } from './labels';
 import { Button, IconButton } from '../../components/ui/button';
 import { Avatar, Badge, PageSpinner } from '../../components/ui/misc';
-import { ConfirmDialog, Menu, MenuItem, MenuLabel, MenuSeparator, useToast } from '../../components/ui/overlay';
+import { ConfirmDialog, Menu, MenuItem, MenuLabel, MenuSeparator, useAnnounce, useToast } from '../../components/ui/overlay';
 import { Textarea } from '../../components/ui/form';
 import { Tooltip } from '../../components/ui/tooltip';
 import { MailFrame } from './MailFrame';
@@ -65,6 +65,12 @@ export interface ThreadNav {
   total: number;
   prev?: () => void;
   next?: () => void;
+}
+
+// Keyboard moves between messages, and Enter / o expands or collapses the focused one.
+export interface MessageRequest {
+  kind: 'next' | 'prev' | 'first' | 'last' | 'toggle';
+  nonce: number;
 }
 
 const sep = <span className="mx-1.5 h-[18px] w-px shrink-0 bg-border" />;
@@ -90,6 +96,7 @@ export function ThreadView({
   onSend,
   onOpenDraft,
   replyRequest,
+  messageRequest,
   nav,
 }: {
   threadId: number;
@@ -98,11 +105,16 @@ export function ThreadView({
   onSend: (r: SendRequest) => void;
   onOpenDraft: (s: ComposeState) => void;
   replyRequest: { kind: ReplyKind; nonce: number } | null;
+  messageRequest: MessageRequest | null;
   nav?: ThreadNav;
 }) {
   const { data, isLoading, error } = useThread(threadId);
   const act = useThreadActions();
   const toast = useToast();
+  const announce = useAnnounce();
+  const heading = useRef<HTMLHeadingElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const refocus = useRef<number | null>(null);
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [compose, setCompose] = useState<ComposeState | null>(null);
@@ -153,6 +165,46 @@ export function ThreadView({
     if (last && data.canSend) startReply(last, replyRequest.kind);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [replyRequest?.nonce]);
+
+  // Reading starts at the subject: focus moves there when the conversation opens.
+  const loaded = data?.thread.id;
+  useEffect(() => {
+    if (loaded) heading.current?.focus();
+  }, [loaded]);
+
+  const messageAt = (i: number) => list.current?.querySelector<HTMLElement>(`[data-message-index="${i}"]`);
+  const toggle = (id: number, index: number) => {
+    // Expanding or collapsing swaps the element, so keyboard focus is put back on the message.
+    if (messageAt(index)?.contains(document.activeElement)) refocus.current = index;
+    setExpanded((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  };
+  useEffect(() => {
+    if (refocus.current === null) return;
+    list.current?.querySelector<HTMLElement>(`[data-message-index="${refocus.current}"]`)?.focus();
+    refocus.current = null;
+  }, [expanded]);
+
+  // ↑ ↓ j k Home End and Enter / o come from the page.
+  useEffect(() => {
+    if (!messageRequest || !data) return;
+    const msgs = data.messages.filter((m) => m.status !== 'draft');
+    const at = msgs.findIndex((_, i) => messageAt(i)?.contains(document.activeElement));
+    const { kind } = messageRequest;
+    if (kind === 'toggle') {
+      if (at >= 0) toggle(msgs[at].id, at);
+      return;
+    }
+    const next = kind === 'first' ? 0 : kind === 'last' ? msgs.length - 1 : kind === 'next' ? at + 1 : at - 1;
+    if (kind === 'prev' && at <= 0) heading.current?.focus();
+    else if (next < msgs.length) messageAt(next)?.focus();
+    else announce('No more messages');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messageRequest?.nonce]);
 
   if (isLoading) return <PageSpinner />;
   if (error || !data) return <div className="p-8 text-center text-sm text-muted">{error ? errorText(error) : 'Conversation not found.'}</div>;
@@ -264,8 +316,8 @@ export function ThreadView({
             <span className="mr-1 text-xs text-faint tabular-nums">
               {nav.index + 1} of {nav.total}
             </span>
-            <IconButton label="Previous" shortcut="K" onClick={nav.prev} disabled={!nav.prev} icon={<ChevronUp />} />
-            <IconButton label="Next" shortcut="J" onClick={nav.next} disabled={!nav.next} icon={<ChevronDown />} />
+            <IconButton label="Previous" shortcut="P" onClick={nav.prev} disabled={!nav.prev} icon={<ChevronUp />} />
+            <IconButton label="Next" shortcut="N" onClick={nav.next} disabled={!nav.next} icon={<ChevronDown />} />
             {sep}
           </>
         )}
@@ -309,7 +361,9 @@ export function ThreadView({
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex max-w-[860px] flex-col gap-3 px-3.5 pt-[18px] pb-10 md:px-9 md:pt-7">
           <div className="px-1 pb-2 md:px-0.5">
-            <h1 className="text-xl leading-[1.3] font-semibold tracking-[-0.02em] break-words text-pretty md:text-[22px]">{t.subject || '(no subject)'}</h1>
+            <h1 ref={heading} tabIndex={-1} className="text-xl leading-[1.3] font-semibold tracking-[-0.02em] break-words text-pretty outline-none md:text-[22px]">
+              {t.subject || '(no subject)'}
+            </h1>
             {(t.labels.length > 0 || t.folder === 'spam' || t.snoozedUntil || (mailbox && mailboxes.length > 1)) && (
               <div className="mt-2.5 flex flex-wrap gap-1.5">
                 {t.labels.map((id) => {
@@ -341,21 +395,16 @@ export function ThreadView({
           </div>
 
           {messages.length > 0 && (
-            <div className="rounded-xl border border-border bg-surface shadow-card">
-              {messages.map((m) => (
+            <div ref={list} className="rounded-xl border border-border bg-surface shadow-card">
+              {messages.map((m, i) => (
                 <MessageItem
                   key={m.id}
                   message={m}
+                  index={i}
+                  total={messages.length}
                   own={own}
                   expanded={expanded.has(m.id)}
-                  onToggle={() =>
-                    setExpanded((s) => {
-                      const n = new Set(s);
-                      if (n.has(m.id)) n.delete(m.id);
-                      else n.add(m.id);
-                      return n;
-                    })
-                  }
+                  onToggle={() => toggle(m.id, i)}
                   canSend={data.canSend}
                   mailboxId={t.mailboxId}
                   onReply={(kind) => startReply(m, kind)}
@@ -411,7 +460,7 @@ export function ThreadView({
                       ['forward', 'Forward', <Forward />, 'F'],
                     ] as [ReplyKind, string, ReactNode, string][]
                   ).map(([kind, label, icon, key]) => (
-                    <Button key={kind} icon={icon} onClick={() => startReply(last, kind)} className="px-3 [&>svg]:h-[15px] [&>svg]:w-[15px] [&>svg]:text-muted">
+                    <Button key={kind} icon={icon} onClick={() => startReply(last, kind)} aria-keyshortcuts={key.toLowerCase()} className="px-3 [&>svg]:h-[15px] [&>svg]:w-[15px] [&>svg]:text-muted">
                       {label}
                       <span aria-hidden className="font-mono text-[11px] font-medium text-faint">
                         {key}
@@ -664,6 +713,8 @@ function AttachmentChip({ a }: { a: Attachment }) {
 
 function MessageItem({
   message: m,
+  index,
+  total,
   own,
   expanded,
   onToggle,
@@ -673,6 +724,8 @@ function MessageItem({
   onChanged,
 }: {
   message: Message;
+  index: number;
+  total: number;
   own: Set<string>;
   expanded: boolean;
   onToggle: () => void;
@@ -699,10 +752,19 @@ function MessageItem({
   const recipients = [...m.to, ...m.cc].map((a) => (own.has(a.address.toLowerCase()) ? 'me' : displayName(a).split(' ')[0])).join(', ');
   const delivered = m.direction === 'out' && m.status === 'delivered';
   const section = 'group/msg border-b border-border last:border-b-0';
+  // What a screen reader says when the keyboard lands on the message.
+  const name = [`Message ${index + 1} of ${total}`, isMe ? 'me' : displayName(m.from), listDate(m.sentAt), !m.isRead && 'unread'].filter(Boolean).join(', ');
 
   if (!expanded) {
     return (
-      <button type="button" onClick={onToggle} className={cn(section, 'flex h-[52px] w-full items-center gap-3 px-4 text-left transition-colors first:rounded-t-xl last:rounded-b-xl hover:bg-surface-2 md:px-5')}>
+      <button
+        type="button"
+        data-message-index={index}
+        aria-expanded={false}
+        aria-label={`${name}, ${m.snippet}`}
+        onClick={onToggle}
+        className={cn(section, 'flex h-[52px] w-full items-center gap-3 px-4 text-left transition-colors first:rounded-t-xl last:rounded-b-xl hover:bg-surface-2 md:px-5')}
+      >
         <Avatar name={m.from.name} address={m.from.address} logo={m.fromLogo} size={28} />
         <span className={cn('w-[110px] shrink-0 truncate text-[13px] md:w-[130px]', !m.isRead ? 'font-semibold' : 'font-medium')}>{isMe ? 'me' : displayName(m.from)}</span>
         <span className="min-w-0 flex-1 truncate text-[13px] text-faint">{m.snippet}</span>
@@ -731,7 +793,7 @@ function MessageItem({
   const banner = 'flex flex-wrap items-center gap-2.5 border-b py-2.5 pr-3 pl-4 text-[13px] group-first/msg:rounded-t-xl';
 
   return (
-    <article className={section}>
+    <article data-message-index={index} tabIndex={-1} aria-label={name} className={cn(section, 'outline-none focus-visible:shadow-[inset_0_0_0_2px_var(--ring)] first:rounded-t-xl last:rounded-b-xl')}>
       {m.status === 'failed' && (
         <div className={cn(banner, 'border-danger/20 bg-danger-soft text-danger')}>
           <CircleX className="h-[15px] w-[15px]" />

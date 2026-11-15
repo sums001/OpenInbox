@@ -140,18 +140,21 @@ export function Tick({
   onChange,
   label,
   className,
+  tabIndex,
 }: {
   checked: boolean;
   indeterminate?: boolean;
   onChange: (v: boolean) => void;
   label: string;
   className?: string;
+  tabIndex?: number;
 }) {
   const on = checked || indeterminate;
   return (
     <button
       type="button"
       role="checkbox"
+      tabIndex={tabIndex}
       aria-checked={indeterminate ? 'mixed' : checked}
       aria-label={label}
       onClick={(e) => {

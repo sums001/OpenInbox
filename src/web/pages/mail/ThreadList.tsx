@@ -28,6 +28,25 @@ function timeHint(at: number): string {
   return new Date(at).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 }
 
+// A row as one line for screen readers, with words for what the row shows by weight, color and icons:
+// "Unread, Starred, Jane Doe, Invoice for October, Hi, attached is…, 3 messages, 10:42 AM".
+function rowLabel(t: ThreadSummary, participants: string, labels: string[], date: string): string {
+  return [
+    t.unreadCount > 0 && 'Unread',
+    t.starred && 'Starred',
+    t.draftCount > 0 && 'Draft',
+    participants || '(unknown)',
+    t.subject || '(no subject)',
+    ...labels.map((l) => `Label ${l}`),
+    t.snippet,
+    t.messageCount > 1 && `${t.messageCount} messages`,
+    t.hasAttachments && 'Has attachments',
+    date,
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
+
 export function ThreadList({
   mailbox,
   view,
@@ -95,10 +114,26 @@ export function ThreadList({
     return () => io.disconnect();
   }, [q]);
 
-  // Keep the keyboard focus visible.
+  // The list is one Tab stop: the keyboard row takes real focus, so screen readers announce each
+  // move. It follows only while the list has focus, or nothing does (coming back from a
+  // conversation, or the first j / ↓), so a refresh never pulls focus out of a field or a menu.
+  const current = Math.min(focusIndex, list.length - 1);
+  const currentId = list[current]?.id;
+  const listFocused = useRef(false);
+  // (Keyed on focusIndex, not current: the list loading in must not move focus.)
   useEffect(() => {
-    container.current?.querySelector(`[data-index="${focusIndex}"]`)?.scrollIntoView({ block: 'nearest' });
-  }, [focusIndex]);
+    const row = container.current?.querySelector<HTMLElement>(`[data-index="${focusIndex}"]`);
+    if (!row) return;
+    const active = document.activeElement;
+    if (!activeId && (active === document.body || container.current?.contains(active))) row.focus({ preventScroll: true });
+    row.scrollIntoView({ block: 'nearest' });
+  }, [focusIndex, activeId]);
+  // The focused row was archived or deleted, or the view changed under it: focus the row now in its place.
+  useEffect(() => {
+    if (activeId || !listFocused.current || document.activeElement !== document.body) return;
+    container.current?.querySelector<HTMLElement>(`[data-index="${current}"]`)?.focus({ preventScroll: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentId]);
 
   const runSearch = (text: string) => {
     const t = text.trim();
@@ -385,7 +420,17 @@ export function ThreadList({
             </div>
           )
         ) : (
-          <ul>
+          // A listbox puts screen readers in focus mode, so the single-key shortcuts reach the app.
+          // The checkbox and star inside a row are for the mouse; x / Space and s do the same.
+          <ul
+            role="listbox"
+            aria-label={heading}
+            aria-multiselectable="true"
+            onFocus={() => (listFocused.current = true)}
+            onBlur={(e) => {
+              if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) listFocused.current = false;
+            }}
+          >
             {list.map((t, i) => {
               const unread = t.unreadCount > 0;
               const active = activeId === t.id;
@@ -393,16 +438,26 @@ export function ThreadList({
               const participants = view === 'sent' || view === 'drafts' ? participantLabel(t.participants, new Set()) : participantLabel(t.participants, own);
               const first = t.participants.find((p) => !own.has(p.address.toLowerCase())) ?? t.participants[0];
               const strong = unread || active;
+              const date = listDate(view === 'sent' && t.lastSentAt ? t.lastSentAt : view === 'snoozed' && t.snoozedUntil ? t.snoozedUntil : t.lastMessageAt);
+              const labelNames = t.labels.flatMap((id) => labelsById.get(id)?.name ?? []);
               return (
                 <li
                   key={t.id}
                   data-index={i}
+                  role="option"
+                  aria-selected={isSelected}
+                  aria-current={active ? 'true' : undefined}
+                  aria-posinset={i + 1}
+                  aria-setsize={q.hasNextPage ? -1 : list.length}
+                  aria-label={rowLabel(t, participants, labelNames, date)}
+                  tabIndex={i === current ? 0 : -1}
+                  onFocus={() => setFocusIndex(i)}
                   onClick={() => {
                     setFocusIndex(i);
                     onOpen(t);
                   }}
                   className={cn(
-                    'group relative flex cursor-pointer gap-3 border-b border-border px-4 py-3 transition-colors md:gap-[11px] md:px-3.5 md:py-2.5',
+                    'group relative flex cursor-pointer gap-3 border-b border-border px-4 py-3 outline-none transition-colors focus-visible:shadow-[inset_0_0_0_2px_var(--ring)] md:gap-[11px] md:px-3.5 md:py-2.5',
                     isSelected ? 'bg-[color-mix(in_oklch,var(--primary-soft)_75%,var(--surface))]' : active ? 'bg-primary-soft' : unread ? 'bg-surface hover:bg-surface-2' : 'hover:bg-surface-2',
                     focusIndex === i && !active && 'md:shadow-[inset_0_0_0_2px_var(--ring)]',
                   )}
@@ -411,6 +466,7 @@ export function ThreadList({
                   {/* Mobile: the avatar toggles selection. */}
                   <button
                     type="button"
+                    tabIndex={-1}
                     className="shrink-0 md:hidden"
                     aria-label={isSelected ? 'Deselect' : 'Select'}
                     onClick={(e) => {
@@ -427,9 +483,10 @@ export function ThreadList({
                     )}
                   </button>
                   <div className="hidden flex-col items-center gap-[9px] pt-0.5 md:flex">
-                    <Tick checked={isSelected} onChange={() => toggle(t.id)} label="Select" />
+                    <Tick checked={isSelected} onChange={() => toggle(t.id)} label="Select" tabIndex={-1} />
                     <button
                       type="button"
+                      tabIndex={-1}
                       aria-label={t.starred ? 'Unstar' : 'Star'}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -453,9 +510,7 @@ export function ThreadList({
                       </span>
                       {t.hasAttachments && <Paperclip className="h-[13px] w-[13px] shrink-0 text-faint" />}
                       {t.starred && <Star className="h-3 w-3 shrink-0 fill-[oklch(0.78_0.16_78)] text-[oklch(0.78_0.16_78)] md:hidden" />}
-                      <span className={cn('shrink-0 text-xs tabular-nums', unread ? 'font-semibold text-fg' : 'text-faint')}>
-                        {listDate(view === 'sent' && t.lastSentAt ? t.lastSentAt : view === 'snoozed' && t.snoozedUntil ? t.snoozedUntil : t.lastMessageAt)}
-                      </span>
+                      <span className={cn('shrink-0 text-xs tabular-nums', unread ? 'font-semibold text-fg' : 'text-faint')}>{date}</span>
                     </div>
                     <div className={cn('truncate text-[13.5px] leading-[19px] md:text-[13px]', unread ? 'font-semibold' : 'font-[450]', strong ? 'text-fg' : 'text-muted')}>{t.subject || '(no subject)'}</div>
                     <div className="flex min-w-0 items-center gap-[5px] text-[13px] leading-[19px]">

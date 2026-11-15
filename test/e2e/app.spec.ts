@@ -177,10 +177,37 @@ test('setup, send, receive, reply, search and isolate members', async ({ page, b
   await expect(page.getByText('Results for “booked”')).toBeVisible();
   await expect(page.locator('li').filter({ hasText: 'Q4 planning agenda' })).toHaveCount(1);
   await page.goto('/mail/all/inbox');
+
+  // 7. Keyboard and screen readers: real focus on named rows, reading starts at the subject,
+  // focus comes back to the row, and results are spoken.
+  const spoken = page.locator('[aria-live="polite"]');
+  const q4 = page.getByRole('option', { name: /Q4 planning agenda.*3 messages/ });
+  await expect(q4).toBeVisible();
+  await expect(page.getByRole('option').first()).not.toBeFocused();
+  await page.keyboard.press('Home');
+  await expect(page.getByRole('option').first()).toBeFocused();
+  await q4.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { level: 1, name: 'Q4 planning agenda' })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('button', { name: /^Message 1 of 3, Maya Chen/ })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('article', { name: /^Message 1 of 3, Maya Chen/ })).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(page.getByRole('article', { name: /^Message 3 of 3/ })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(spoken).toHaveText('No more messages');
+  await page.keyboard.press('u');
+  await expect(q4).toBeFocused();
+  await page.keyboard.press('x');
+  await expect(spoken).toHaveText('1 conversation selected');
+  await expect(q4).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('Escape');
+  await expect(spoken).toHaveText('Selection cleared');
   await page.goto('/admin');
   await expect(page.getByText('Mail traffic')).toBeVisible();
 
-  // 7. Bob signs in: forced password change, only his inbox, no admin.
+  // 8. Bob signs in: forced password change, only his inbox, no admin.
   const bobCtx = await browser.newContext();
   const bob = await bobCtx.newPage();
   await bob.goto(`${APP}/login`);
@@ -198,7 +225,7 @@ test('setup, send, receive, reply, search and isolate members', async ({ page, b
   expect(adminApi.status()).toBe(403);
   await bobCtx.close();
 
-  // 8. Select all conversations: more than one page, archived in batches on the server.
+  // 9. Select all conversations: more than one page, archived in batches on the server.
   for (let i = 0; i < 55; i++) {
     expect(await deliver(mail({ from: 'News <news@acme.test>', to: 'admin@example.com', subject: `Weekly digest ${i}`, body: 'This week.', id: `digest-${i}@acme.test` }), 'news@acme.test', 'admin@example.com')).toBe(200);
   }

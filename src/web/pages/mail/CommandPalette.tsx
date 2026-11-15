@@ -28,7 +28,7 @@ import {
   Waypoints,
 } from 'lucide-react';
 import { useIsAdmin } from '../../lib/session';
-import { cn } from '../../lib/utils';
+import { cn, storageGet } from '../../lib/utils';
 import { Kbd } from '../../components/ui/misc';
 import { useMailboxes } from './data';
 import { labelDot } from './labels';
@@ -207,8 +207,11 @@ export const SHORTCUTS: [string[], string][] = [
   [['c'], 'Compose'],
   [['/'], 'Search'],
   [['Ctrl/⌘ K'], 'Command palette'],
-  [['j', '/', 'k'], 'Next / previous conversation'],
-  [['o', 'or', 'Enter'], 'Open conversation'],
+  [['↓', '/', '↑'], 'Next / previous conversation, or message when one is open'],
+  [['j', '/', 'k'], 'Same as ↓ / ↑'],
+  [['n', '/', 'p'], 'Next / previous conversation'],
+  [['Home', '/', 'End'], 'First / last conversation or message'],
+  [['o', 'or', 'Enter'], 'Open conversation, or expand a message'],
   [['u', 'or', 'Esc'], 'Back to the list'],
   [['e'], 'Archive'],
   [['#'], 'Move to Trash'],
@@ -221,6 +224,14 @@ export const SHORTCUTS: [string[], string][] = [
   [['Ctrl/⌘ Enter'], 'Send (in the composer)'],
   [['?'], 'This help'],
 ];
+
+// Single-letter and symbol shortcuts can be turned off for this browser, for screen reader users
+// who rely on their own single-letter navigation. Arrows, Home, End, Enter and Esc keep working.
+export const SINGLE_KEYS = 'oi.singleKeys';
+
+export function singleKeysOn(): boolean {
+  return storageGet(SINGLE_KEYS, true);
+}
 
 export function KeyCombo({ keys }: { keys: string[] }) {
   return (
