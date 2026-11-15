@@ -9,10 +9,23 @@ import { withSignature, Composer, type ComposeState, type SendRequest } from './
 import { MailSidebar } from './MailSidebar';
 import { ThreadList } from './ThreadList';
 import { ThreadView } from './ThreadView';
-import { useMailboxes, useMailSync, useThreadActions, useThreads } from './data';
+import { useMailboxes, useMailSync, useThreadActions, useThreads, useViewAction, useViewCount, type Action, type ActionOpts, type BulkProgress } from './data';
 import { useToast } from '../../components/ui/overlay';
 import { Kbd, PageSpinner } from '../../components/ui/misc';
 import type { ThreadSummary } from '../../lib/types';
+
+const BULK_VERBS: Partial<Record<Action, string>> = {
+  archive: 'Archiving',
+  inbox: 'Moving to Inbox',
+  trash: 'Moving to Trash',
+  delete: 'Deleting',
+  spam: 'Marking as spam',
+  read: 'Marking as read',
+  unread: 'Marking as unread',
+  star: 'Starring',
+  unstar: 'Unstarring',
+  snooze: 'Snoozing',
+};
 
 export default function MailPage() {
   return (
@@ -46,7 +59,18 @@ function MailApp() {
   const threads = useThreads(mailboxParam, view, query);
   const list = useMemo(() => threads.data?.pages.flatMap((p) => p.threads) ?? [], [threads.data]);
   const act = useThreadActions();
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const viewAction = useViewAction();
+  const [selected, setSelectedIds] = useState<Set<number>>(new Set());
+  // Every conversation in the view, not just the loaded ones (Gmail's "Select all conversations").
+  const [allMatching, setAllMatching] = useState(false);
+  const [progress, setProgress] = useState<BulkProgress | null>(null);
+  const setSelected = useCallback((s: Set<number>) => {
+    setSelectedIds(s);
+    setAllMatching(false);
+  }, []);
+  const pageAllSelected = list.length > 0 && list.every((t) => selected.has(t.id));
+  const wholeViewPossible = !!threads.hasNextPage && view !== 'search' && view !== 'scheduled';
+  const { data: matchCount } = useViewCount(mailboxParam, view, wholeViewPossible && (pageAllSelected || allMatching));
   const [focusIndex, setFocusIndex] = useState(0);
   const [drawer, setDrawer] = useState(false);
   const [composers, setComposers] = useState<ComposeState[]>([]);
@@ -58,7 +82,33 @@ function MailApp() {
   useEffect(() => {
     setSelected(new Set());
     setFocusIndex(0);
-  }, [mailboxParam, view, query]);
+  }, [mailboxParam, view, query, setSelected]);
+
+  // Runs an action on the selection. With `whole`, on every conversation in the view, one server
+  // batch at a time with progress shown above the list.
+  const bulkAction = useCallback(
+    (action: Action, opts: ActionOpts = {}, label?: string, whole = allMatching) => {
+      if (whole) {
+        if (progress) {
+          toast.info('Wait for the current action to finish.');
+          return;
+        }
+        setSelected(new Set());
+        setProgress({ verb: BULK_VERBS[action] ?? 'Updating', done: 0, total: matchCount && !matchCount.capped ? matchCount.count : null });
+        viewAction(mailboxParam, view, action, opts, (done) => setProgress((p) => p && { ...p, done }))
+          .then((n) => toast.success(`${label ?? 'Updated'} · ${n.toLocaleString()} conversation${n === 1 ? '' : 's'}`))
+          .catch((e: Error & { done?: number }) => toast.error(`Stopped after ${(e.done ?? 0).toLocaleString()} conversations: ${errorText(e)}`))
+          .finally(() => setProgress(null));
+        return;
+      }
+      if (!selected.size) return;
+      act([...selected], action, opts)
+        .then(() => label && toast.success(label))
+        .catch(() => toast.error('Something went wrong.'));
+      setSelected(new Set());
+    },
+    [allMatching, progress, matchCount, mailboxParam, view, selected, act, viewAction, setSelected, toast],
+  );
 
   const base = `/mail/${mailboxParam}/${view}`;
   const suffix = view === 'search' ? `?q=${encodeURIComponent(query)}` : '';
@@ -228,6 +278,8 @@ function MailApp() {
       if (isTyping(e) || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('[role="dialog"]')) return;
       const focused = list[focusIndex];
       const target = threadId ? [threadId] : selected.size ? [...selected] : focused ? [focused.id] : [];
+      // Actions on the selection go through bulkAction, which also covers "every conversation".
+      const onSelection = !threadId && (allMatching || selected.size > 0);
       if (gPressed.current) {
         gPressed.current = false;
         const map: Record<string, string> = { i: 'inbox', s: 'sent', d: 'drafts', a: 'archive', t: 'trash', p: 'spam', z: 'snoozed' };
@@ -283,30 +335,33 @@ function MailApp() {
           }
           break;
         case 'e':
-          if (target.length) act(target, view === 'archive' ? 'inbox' : 'archive').then(() => toast.success(view === 'archive' ? 'Moved to Inbox' : 'Archived'));
-          setSelected(new Set());
+          if (onSelection) bulkAction(view === 'archive' ? 'inbox' : 'archive', {}, view === 'archive' ? 'Moved to Inbox' : 'Archived');
+          else if (target.length) act(target, view === 'archive' ? 'inbox' : 'archive').then(() => toast.success(view === 'archive' ? 'Moved to Inbox' : 'Archived'));
           leave();
           break;
         case '#':
-          if (target.length) act(target, 'trash').then(() => toast.success('Moved to Trash'));
-          setSelected(new Set());
+          if (onSelection) bulkAction('trash', {}, 'Moved to Trash');
+          else if (target.length) act(target, 'trash').then(() => toast.success('Moved to Trash'));
           leave();
           break;
         case '!':
-          if (target.length) act(target, 'spam').then(() => toast.success('Marked as spam'));
-          setSelected(new Set());
+          if (onSelection) bulkAction('spam', {}, 'Marked as spam');
+          else if (target.length) act(target, 'spam').then(() => toast.success('Marked as spam'));
           leave();
           break;
         case 's': {
           const t = list.find((x) => x.id === target[0]);
-          if (target.length) act(target, t?.starred ? 'unstar' : 'star');
+          if (onSelection) bulkAction(t?.starred ? 'unstar' : 'star');
+          else if (target.length) act(target, t?.starred ? 'unstar' : 'star');
           break;
         }
         case 'I':
-          if (target.length) act(target, 'read');
+          if (onSelection) bulkAction('read');
+          else if (target.length) act(target, 'read');
           break;
         case 'U':
-          if (target.length) act(target, 'unread');
+          if (onSelection) bulkAction('unread');
+          else if (target.length) act(target, 'unread');
           break;
         case 'r':
         case 'a':
@@ -320,7 +375,7 @@ function MailApp() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [list, focusIndex, selected, threadId, view, base, suffix, mailboxParam, navigate, openCompose, openThread, act, toast]);
+  }, [list, focusIndex, selected, allMatching, threadId, view, base, suffix, mailboxParam, navigate, openCompose, openThread, act, bulkAction, setSelected, toast]);
 
   // The browser tab shows the unread count.
   useEffect(() => {
@@ -367,6 +422,11 @@ function MailApp() {
           setFocusIndex={setFocusIndex}
           selected={selected}
           setSelected={setSelected}
+          allMatching={allMatching}
+          setAllMatching={setAllMatching}
+          matchCount={matchCount ?? null}
+          progress={progress}
+          onBulk={bulkAction}
           onOpen={openThread}
           onSearch={onSearch}
           onMenu={() => setDrawer(true)}
