@@ -497,6 +497,23 @@ mail.post('/blocked', async (c) => {
   return c.json({ ok: true });
 });
 
+function sanitizeImportLabels(repeated: string[], csv: string | undefined): string[] {
+  const raw = repeated.length ? repeated : csv ? csv.split(',') : [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    // eslint-disable-next-line no-control-regex
+    const name = item.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60).trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
 // Import: one .eml per request (the web app sends files one by one).
 mail.post('/mailboxes/:id/import', async (c) => {
   const user = currentUser(c);
@@ -507,13 +524,56 @@ mail.post('/mailboxes/:id/import', async (c) => {
   if (bytes.byteLength > 25 * 1024 * 1024) throw badRequest('Files over 25 MB cannot be imported.');
   const box = await getMailbox(c.env.DB, mailboxId);
   const settings = await loadSettings(c.env.DB);
+
+  const folderParam = c.req.query('folder');
+  const folderOverride =
+    folderParam === 'inbox' || folderParam === 'archive' || folderParam === 'trash' || folderParam === 'spam'
+      ? folderParam
+      : 'archive';
+
   const r = await ingest({ env: c.env, settings }, bytes, {
     rcpt: box.address,
     envelopeFrom: '',
     recipient: { mailboxId, address: box.address, via: 'exact' },
-    folderOverride: c.req.query('folder') === 'inbox' ? 'inbox' : 'archive',
+    folderOverride,
     markRead: true,
   });
+
+  if (r.threadId) {
+    const labelNames = sanitizeImportLabels(c.req.queries('label') ?? [], c.req.query('labels'));
+    const starred = c.req.query('starred') === '1';
+    const stmts: D1PreparedStatement[] = [];
+    const now = Date.now();
+
+    if (labelNames.length > 0) {
+      const existing = await all<{ id: number; name: string }>(c.env.DB, 'SELECT id, name FROM labels WHERE mailbox_id = ?', mailboxId);
+      const byLower = new Map(existing.map((l) => [l.name.toLowerCase(), l.id]));
+
+      for (const name of labelNames) {
+        const existingId = byLower.get(name.toLowerCase());
+        if (existingId) {
+          stmts.push(c.env.DB.prepare('INSERT OR IGNORE INTO thread_labels (thread_id, label_id) VALUES (?, ?)').bind(r.threadId, existingId));
+        } else {
+          stmts.push(
+            c.env.DB.prepare('INSERT OR IGNORE INTO labels (id, mailbox_id, name, color, created_at) VALUES (?, ?, ?, ?, ?)').bind(newId(), mailboxId, name, 'slate', now),
+            c.env.DB
+              .prepare('INSERT OR IGNORE INTO thread_labels (thread_id, label_id) SELECT ?, id FROM labels WHERE mailbox_id = ? AND name = ? COLLATE NOCASE LIMIT 1')
+              .bind(r.threadId, mailboxId, name),
+          );
+        }
+      }
+    }
+
+    if (starred) {
+      stmts.push(c.env.DB.prepare('UPDATE threads SET starred = 1, updated_at = ? WHERE id = ? AND mailbox_id = ?').bind(now, r.threadId, mailboxId));
+    }
+
+    if (stmts.length > 0) {
+      stmts.push(bumpState(c.env.DB, mailboxId));
+      await c.env.DB.batch(stmts);
+    }
+  }
+
   return c.json(r);
 });
 
