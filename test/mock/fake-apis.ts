@@ -45,6 +45,9 @@ export interface FakeState {
   // Public DNS (cloudflare-dns.com): TXT records by name. Files served at https://logos.test/<path>.
   publicTxt: Record<string, string[]>;
   logos: Record<string, string>;
+  // Web Push services (FCM, Mozilla, Apple, Windows): every push received, and a status to answer
+  // per endpoint path (default 201), e.g. 410 for a subscription the browser has dropped.
+  push: { received: FakePush[]; status: Record<string, number> };
   requests: { method: string; url: string; body?: unknown }[];
   seq: number;
 }
@@ -81,9 +84,26 @@ export function createFakeState(): FakeState {
     release: { tag_name: 'v1.0.0', html_url: 'https://github.com/example/openinbox/releases/tag/v1.0.0', body: 'First release.' },
     publicTxt: {},
     logos: {},
+    push: { received: [], status: {} },
     requests: [],
     seq: 1,
   };
+}
+
+export interface FakePush {
+  endpoint: string;
+  headers: Record<string, string>;
+  body: string; // base64url of the encrypted aes128gcm body
+}
+
+// The push services browsers subscribe with. Tests use real hostnames so they keep passing when
+// the Worker only sends to known push services.
+export const PUSH_HOSTS = ['fcm.googleapis.com', 'updates.push.services.mozilla.com', 'web.push.apple.com', 'wns2-par02p.notify.windows.com'];
+
+function base64Url(bytes: Uint8Array): string {
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -123,6 +143,13 @@ export async function handleFake(state: FakeState, req: Request): Promise<Respon
     const name = url.searchParams.get('name') ?? '';
     const txt = state.publicTxt[name] ?? [];
     return json({ Status: txt.length ? 0 : 3, Answer: txt.map((data) => ({ name, type: 16, TTL: 300, data: `"${data}"` })) });
+  }
+  if (PUSH_HOSTS.includes(url.hostname)) {
+    state.requests.push({ method: req.method, url: `push${path}` });
+    const headers = Object.fromEntries([...req.headers].map(([k, v]) => [k.toLowerCase(), v]));
+    state.push.received.push({ endpoint: url.href, headers, body: base64Url(new Uint8Array(await req.arrayBuffer())) });
+    const status = state.push.status[path] ?? 201;
+    return new Response(status >= 400 ? 'push service error' : null, { status });
   }
   if (url.hostname === 'logos.test') {
     state.requests.push({ method: req.method, url: `logos${path}` });
