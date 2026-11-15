@@ -74,7 +74,7 @@ OpenInbox is built for everyday conversations. It is not a bulk or marketing sen
 - Receive on any domain in your Cloudflare account. Email Routing is set up for you.
 - Send through Resend, Brevo, Mailjet, Cloudflare Email Sending or any SMTP server. When one provider hits its free limit, mail falls back to another.
 - Threads, All Mail, search (`from:` `has:attachment` `before:`), labels, filters, snooze, scheduled and undo send.
-- Command palette and keyboard shortcuts, dark mode, mobile layout.
+- Command palette and keyboard shortcuts that work with screen readers, dark mode, mobile layout.
 
 **Teams**
 - Unlimited users, with personal and shared inboxes.

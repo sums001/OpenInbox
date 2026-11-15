@@ -10,9 +10,11 @@ import { MailSidebar } from './MailSidebar';
 import { ThreadList } from './ThreadList';
 import { ThreadView } from './ThreadView';
 import { useMailboxes, useMailSync, useThreadActions, useThreads, useViewAction, useViewCount, type Action, type ActionOpts, type BulkProgress } from './data';
-import { useToast } from '../../components/ui/overlay';
+import { singleKeysOn } from './CommandPalette';
+import { useAnnounce, useToast } from '../../components/ui/overlay';
 import { Kbd, PageSpinner } from '../../components/ui/misc';
 import type { ThreadSummary } from '../../lib/types';
+import type { MessageRequest } from './ThreadView';
 
 const BULK_VERBS: Partial<Record<Action, string>> = {
   archive: 'Archiving',
@@ -43,6 +45,15 @@ function isTyping(e: KeyboardEvent): boolean {
   return t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName);
 }
 
+// Enter and Space on a button or link already press it.
+function onControl(e: KeyboardEvent): boolean {
+  return (e.key === 'Enter' || e.key === ' ') && !!(e.target as HTMLElement).closest('button, a[href], [role="menuitem"]');
+}
+
+function conversations(n: number): string {
+  return n ? `${n} conversation${n === 1 ? '' : 's'} selected` : 'No conversations selected';
+}
+
 function MailApp() {
   const params = useParams();
   const [search] = useSearchParams();
@@ -50,6 +61,7 @@ function MailApp() {
   const location = useLocation();
   const qc = useQueryClient();
   const toast = useToast();
+  const announce = useAnnounce();
   const mailboxParam = params.mailbox ?? 'all';
   const view = params.view ?? 'inbox';
   const threadId = params.threadId ? Number(params.threadId) : null;
@@ -69,12 +81,14 @@ function MailApp() {
     setAllMatching(false);
   }, []);
   const pageAllSelected = list.length > 0 && list.every((t) => selected.has(t.id));
-  const wholeViewPossible = !!threads.hasNextPage && view !== 'search' && view !== 'scheduled';
+  const hasMore = !!threads.hasNextPage;
+  const wholeViewPossible = hasMore && view !== 'search' && view !== 'scheduled';
   const { data: matchCount } = useViewCount(mailboxParam, view, wholeViewPossible && (pageAllSelected || allMatching));
   const [focusIndex, setFocusIndex] = useState(0);
   const [drawer, setDrawer] = useState(false);
   const [composers, setComposers] = useState<ComposeState[]>([]);
   const [replyRequest, setReplyRequest] = useState<{ kind: 'reply' | 'replyAll' | 'forward'; nonce: number } | null>(null);
+  const [messageRequest, setMessageRequest] = useState<MessageRequest | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const pending = useRef(new Map<number, ReturnType<typeof setTimeout>>());
   const gPressed = useRef(false);
@@ -83,6 +97,12 @@ function MailApp() {
     setSelected(new Set());
     setFocusIndex(0);
   }, [mailboxParam, view, query, setSelected]);
+
+  // The list's keyboard row follows the open conversation, so going back lands on it.
+  useEffect(() => {
+    const i = threadId ? list.findIndex((t) => t.id === threadId) : -1;
+    if (i >= 0) setFocusIndex(i);
+  }, [threadId, list]);
 
   // Runs an action on the selection. With `whole`, on every conversation in the view, one server
   // batch at a time with progress shown above the list.
@@ -275,7 +295,9 @@ function MailApp() {
   // Keyboard shortcuts (Ctrl/⌘ K is in the app shell).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (isTyping(e) || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('[role="dialog"]')) return;
+      if (isTyping(e) || onControl(e) || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('[role="dialog"]')) return;
+      // Letters and symbols can be turned off for screen readers that use them; named keys always work.
+      if (e.key.length === 1 && e.key !== ' ' && !singleKeysOn()) return;
       const focused = list[focusIndex];
       const target = threadId ? [threadId] : selected.size ? [...selected] : focused ? [focused.id] : [];
       // Actions on the selection go through bulkAction, which also covers "every conversation".
@@ -287,6 +309,26 @@ function MailApp() {
         return;
       }
       const leave = () => threadId && navigate(`${base}${suffix}`);
+      const inList = !!(e.target as HTMLElement).closest('[role="listbox"]');
+      // The first move from outside the list lands on its keyboard row, so it is heard before moving on.
+      const enterList = () => {
+        const row = threadId || inList ? null : document.querySelector<HTMLElement>('[role="listbox"] [tabindex="0"]');
+        row?.focus();
+        return !!row;
+      };
+      // Next / previous conversation: the keyboard row in the list, or the one that opens next.
+      const step = (d: 1 | -1) => {
+        if (threadId) {
+          const next = list[list.findIndex((t) => t.id === threadId) + d];
+          if (next) openThread(next);
+          else announce(d > 0 ? 'No more conversations' : 'This is the first conversation');
+        } else if (!enterList()) {
+          const i = Math.min(focusIndex, list.length - 1) + d;
+          if (i >= 0 && i < list.length) setFocusIndex(i);
+          // More rows load as the list scrolls to its end.
+          else if (d < 0 || !hasMore) announce(d > 0 ? 'No more conversations' : 'This is the first conversation');
+        }
+      };
       switch (e.key) {
         case 'c':
           e.preventDefault();
@@ -303,35 +345,60 @@ function MailApp() {
           gPressed.current = true;
           setTimeout(() => (gPressed.current = false), 1200);
           break;
+        // In an open conversation, ↑ ↓ j k Home End move between its messages; n / p change conversation.
         case 'j':
         case 'ArrowDown':
-          if (threadId) {
-            const i = list.findIndex((t) => t.id === threadId);
-            if (list[i + 1]) openThread(list[i + 1]);
-          } else setFocusIndex((i) => Math.min(i + 1, list.length - 1));
+          e.preventDefault();
+          if (threadId) setMessageRequest({ kind: 'next', nonce: Date.now() });
+          else step(1);
           break;
         case 'k':
         case 'ArrowUp':
-          if (threadId) {
-            const i = list.findIndex((t) => t.id === threadId);
-            if (i > 0) openThread(list[i - 1]);
-          } else setFocusIndex((i) => Math.max(i - 1, 0));
+          e.preventDefault();
+          if (threadId) setMessageRequest({ kind: 'prev', nonce: Date.now() });
+          else step(-1);
+          break;
+        case 'n':
+          step(1);
+          break;
+        case 'p':
+          step(-1);
+          break;
+        case 'Home':
+        case 'End':
+          e.preventDefault();
+          if (threadId) setMessageRequest({ kind: e.key === 'Home' ? 'first' : 'last', nonce: Date.now() });
+          else if (list.length) {
+            enterList();
+            setFocusIndex(e.key === 'Home' ? 0 : list.length - 1);
+          }
           break;
         case 'o':
         case 'Enter':
-          if (!threadId && focused) openThread(focused);
+          if (threadId) setMessageRequest({ kind: 'toggle', nonce: Date.now() });
+          else if (focused) openThread(focused);
           break;
         case 'u':
         case 'Escape':
           if (threadId) navigate(`${base}${suffix}`);
-          else setSelected(new Set());
+          else if (selected.size || allMatching) {
+            setSelected(new Set());
+            announce('Selection cleared');
+          }
           break;
+        // Space selects too, as in any multi-select list; elsewhere it scrolls.
+        case ' ':
         case 'x':
-          if (focused) {
+          if (e.key === ' ') {
+            if (!inList) break;
+            e.preventDefault();
+          }
+          if (focused && !threadId) {
             const n = new Set(selected);
             if (n.has(focused.id)) n.delete(focused.id);
             else n.add(focused.id);
             setSelected(n);
+            announce(conversations(n.size));
           }
           break;
         case 'e':
@@ -349,19 +416,23 @@ function MailApp() {
           else if (target.length) act(target, 'spam').then(() => toast.success('Marked as spam'));
           leave();
           break;
+        // These change the row in place, with no toast, so they are only spoken.
         case 's': {
           const t = list.find((x) => x.id === target[0]);
           if (onSelection) bulkAction(t?.starred ? 'unstar' : 'star');
           else if (target.length) act(target, t?.starred ? 'unstar' : 'star');
+          if (onSelection || target.length) announce(t?.starred ? 'Unstarred' : 'Starred');
           break;
         }
         case 'I':
           if (onSelection) bulkAction('read');
           else if (target.length) act(target, 'read');
+          if (onSelection || target.length) announce('Marked as read');
           break;
         case 'U':
           if (onSelection) bulkAction('unread');
           else if (target.length) act(target, 'unread');
+          if (onSelection || target.length) announce('Marked as unread');
           break;
         case 'r':
         case 'a':
@@ -375,7 +446,7 @@ function MailApp() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [list, focusIndex, selected, allMatching, threadId, view, base, suffix, mailboxParam, navigate, openCompose, openThread, act, bulkAction, setSelected, toast]);
+  }, [list, hasMore, focusIndex, selected, allMatching, threadId, view, base, suffix, mailboxParam, navigate, openCompose, openThread, act, bulkAction, setSelected, toast, announce]);
 
   // The browser tab shows the unread count.
   useEffect(() => {
@@ -444,6 +515,7 @@ function MailApp() {
             onSend={onSend}
             onOpenDraft={(s) => openCompose(s)}
             replyRequest={replyRequest}
+            messageRequest={messageRequest}
             nav={nav}
           />
         ) : (

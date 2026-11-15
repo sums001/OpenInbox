@@ -6,9 +6,10 @@ import { useSession } from '../../lib/session';
 import { errorText, post } from '../../lib/api';
 import type { Session } from '../../lib/types';
 import { useTheme, type Theme } from '../../lib/theme';
-import { cn } from '../../lib/utils';
-import { CommandPalette, KeyCombo, SHORTCUTS } from '../../pages/mail/CommandPalette';
+import { cn, storageSet } from '../../lib/utils';
+import { CommandPalette, KeyCombo, SHORTCUTS, SINGLE_KEYS, singleKeysOn } from '../../pages/mail/CommandPalette';
 import { LogoMark } from '../Logo';
+import { Switch } from '../ui/form';
 import { Dialog, Menu, MenuItem, MenuLabel, MenuSeparator, useToast } from '../ui/overlay';
 import { Avatar, Kbd } from '../ui/misc';
 
@@ -24,6 +25,7 @@ export function AppShell() {
   const isAdmin = user?.role === 'owner' || user?.role === 'admin';
   const [palette, setPalette] = useState(false);
   const [help, setHelp] = useState(false);
+  const [singleKeys, setSingleKeys] = useState(singleKeysOn);
 
   // Ctrl/⌘ K and the shortcuts help work on every page.
   useEffect(() => {
@@ -150,6 +152,20 @@ export function AppShell() {
               <KeyCombo keys={keys} />
             </div>
           ))}
+        </div>
+        <div className="mt-4 flex items-center justify-between gap-4">
+          <div>
+            <div className="text-sm font-medium">Single-key shortcuts</div>
+            <div className="text-xs text-muted">Turn off if your screen reader uses letter keys for its own navigation. Arrows, Home, End, Enter and Esc keep working (this browser only).</div>
+          </div>
+          <Switch
+            checked={singleKeys}
+            onChange={(v) => {
+              setSingleKeys(v);
+              storageSet(SINGLE_KEYS, v);
+            }}
+            label="Single-key shortcuts"
+          />
         </div>
       </Dialog>
     </div>

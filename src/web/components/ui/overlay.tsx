@@ -225,6 +225,7 @@ interface Toast {
 type Push = (t: Omit<Toast, 'id' | 'duration'> & { duration?: number }) => number;
 const ToastContext = createContext<Push>(() => 0);
 const DismissContext = createContext<(id: number) => void>(() => {});
+const AnnounceContext = createContext<(message: string) => void>(() => {});
 
 function ToastItem({ toast: t, dismiss }: { toast: Toast; dismiss: (id: number) => void }) {
   // A pending toast counts down to the moment its action stops being possible.
@@ -235,6 +236,13 @@ function ToastItem({ toast: t, dismiss }: { toast: Toast; dismiss: (id: number) 
     const id = setInterval(() => setLeft(Math.max(0, Math.ceil((end - Date.now()) / 1000))), 250);
     return () => clearInterval(id);
   }, [t.tone, t.duration]);
+  // The message goes into the status region just after the toast appears: screen readers often skip
+  // a region that arrives with its text already in it.
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => setShown(true), 50);
+    return () => clearTimeout(id);
+  }, []);
   const Icon = t.tone === 'success' ? CircleCheck : t.tone === 'error' ? CircleX : t.tone === 'pending' ? LoaderCircle : Info;
   return (
     <div
@@ -245,7 +253,7 @@ function ToastItem({ toast: t, dismiss }: { toast: Toast; dismiss: (id: number) 
       )}
     >
       <Icon className={cn('h-[15px] w-[15px] shrink-0', t.tone === 'success' ? 'text-success' : t.tone === 'error' ? 'text-danger' : t.tone === 'pending' ? 'animate-spin text-muted' : 'text-primary-text')} />
-      <div className="min-w-0 flex-1 font-medium">{t.message}</div>
+      <div className="min-w-0 flex-1 font-medium">{shown && t.message}</div>
       {t.action && (
         <button
           type="button"
@@ -271,6 +279,17 @@ function ToastItem({ toast: t, dismiss }: { toast: Toast; dismiss: (id: number) 
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  // A polite live region for messages that are only spoken. It is always in the page, so screen
+  // readers pick up every change; the key makes the same message twice in a row speak twice. It
+  // empties again after a while, so the page doesn't keep stale text around.
+  const [spoken, setSpoken] = useState({ text: '', n: 0 });
+  const clear = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const announce = useCallback((text: string) => {
+    setSpoken((s) => ({ text, n: s.n + 1 }));
+    clearTimeout(clear.current);
+    clear.current = setTimeout(() => setSpoken((s) => ({ ...s, text: '' })), 4000);
+  }, []);
+  useEffect(() => () => clearTimeout(clear.current), []);
   const dismiss = useCallback((id: number) => setToasts((ts) => ts.filter((t) => t.id !== id)), []);
   const push = useCallback<Push>(
     (t) => {
@@ -285,18 +304,30 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={push}>
       <DismissContext.Provider value={dismiss}>
-        {children}
-        {createPortal(
-          <div className="pointer-events-none fixed right-4 bottom-4 left-4 z-[60] flex flex-col items-stretch gap-2 sm:right-auto sm:bottom-6 sm:left-6 sm:w-[360px]">
-            {toasts.map((t) => (
-              <ToastItem key={t.id} toast={t} dismiss={dismiss} />
-            ))}
-          </div>,
-          document.body,
-        )}
+        <AnnounceContext.Provider value={announce}>
+          {children}
+          {createPortal(
+            <>
+              <div className="pointer-events-none fixed right-4 bottom-4 left-4 z-[60] flex flex-col items-stretch gap-2 sm:right-auto sm:bottom-6 sm:left-6 sm:w-[360px]">
+                {toasts.map((t) => (
+                  <ToastItem key={t.id} toast={t} dismiss={dismiss} />
+                ))}
+              </div>
+              <div aria-live="polite" aria-atomic="true" className="sr-only">
+                <span key={spoken.n}>{spoken.text}</span>
+              </div>
+            </>,
+            document.body,
+          )}
+        </AnnounceContext.Provider>
       </DismissContext.Provider>
     </ToastContext.Provider>
   );
+}
+
+// Speaks a short message to screen readers without showing anything ("Starred", "3 selected").
+export function useAnnounce() {
+  return useContext(AnnounceContext);
 }
 
 export function useToast() {

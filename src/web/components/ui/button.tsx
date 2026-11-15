@@ -53,9 +53,27 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   );
 });
 
-// Icon-only button. The label is its accessible name and tooltip; `shortcut` shows the key.
+// The shortcut as shown ("E", "⇧U") in aria-keyshortcuts form ("e", "Shift+U").
+function ariaKeys(shortcut: string): string {
+  if (shortcut.startsWith('⇧')) return `Shift+${shortcut.slice(1)}`;
+  return shortcut.length === 1 ? shortcut.toLowerCase() : shortcut;
+}
+
+// Icon-only button. The label is its accessible name and tooltip; `shortcut` shows the key and
+// tells screen readers about it.
 export const IconButton = forwardRef<HTMLButtonElement, ButtonProps & { label: string; shortcut?: string }>(function IconButton({ label, shortcut, className, disabled, ...rest }, ref) {
-  const button = <Button ref={ref} variant="ghost" size="icon" aria-label={label} className={cn('[&>svg]:h-4 [&>svg]:w-4', className)} disabled={disabled} {...rest} />;
+  const button = (
+    <Button
+      ref={ref}
+      variant="ghost"
+      size="icon"
+      aria-label={label}
+      aria-keyshortcuts={shortcut ? ariaKeys(shortcut) : undefined}
+      className={cn('[&>svg]:h-4 [&>svg]:w-4', className)}
+      disabled={disabled}
+      {...rest}
+    />
+  );
   // A disabled button gets no pointer events, so the tooltip goes on a wrapper.
   if (disabled)
     return (
