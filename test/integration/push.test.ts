@@ -5,6 +5,7 @@ import { useFakeApis } from '../helpers/fake';
 import { Client, deliver, email, ENCRYPTION_KEY, setupInstance } from '../helpers/client';
 import { decryptPush, newDevice, subscription, type Device } from '../helpers/push';
 import { decrypt, encrypt, fromBase64Url } from '../../src/worker/lib/crypto';
+import { MAX_PUSHES_PER_MESSAGE } from '../../src/worker/services/webpush';
 import type { FakeState } from '../mock/fake-apis';
 
 interface Payload {
@@ -222,6 +223,17 @@ describe('web push', () => {
       await deliver(once, { from: 'ann@sender.test', to: 'admin@example.com' });
       await deliver(once, { from: 'ann@sender.test', to: 'admin@example.com' });
       expect(await pushesTo(fake.state, d)).toHaveLength(1);
+    });
+
+    it('sends at most 20 pushes per message, to the most recently active devices', async () => {
+      const devices: Device[] = [];
+      for (let i = 0; i < 25; i++) devices.push(await subscribe(admin));
+      const stale = devices.slice(0, 5);
+      for (const d of stale) await env.DB.prepare('UPDATE push_subscriptions SET last_used_at = 1 WHERE endpoint = ?').bind(d.endpoint).run();
+
+      await deliver(email({ subject: 'Busy inbox' }), { from: 'ann@sender.test', to: 'admin@example.com' });
+      expect(fake.state.push.received).toHaveLength(MAX_PUSHES_PER_MESSAGE);
+      for (const d of stale) expect(await pushesTo(fake.state, d), d.endpoint).toHaveLength(0);
     });
 
     it('drops subscriptions the push service reports gone, and never fails delivery', async () => {

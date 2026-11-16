@@ -1,7 +1,7 @@
 // Web Push (RFC 8291 message encryption & RFC 8292 VAPID authentication)
 // Runs directly on Cloudflare Workers using standard Web Crypto API.
 import type { Env } from '../env';
-import { all, first, run } from '../db/db';
+import { all, first } from '../db/db';
 import { loadSettings } from '../db/settings';
 import { decrypt, encrypt, fromBase64Url, toBase64Url } from '../lib/crypto';
 import { log, logError } from '../lib/log';
@@ -185,18 +185,33 @@ async function encryptPayload(clientP256dh: string, clientAuth: string, payload:
   return concatBytes(salt, rs, idlen, serverPublicRaw, cipherBytes);
 }
 
-export async function sendWebPush(env: Env, sub: PushSubscriptionRow, payload: PushPayload): Promise<boolean> {
+// Each push is one subrequest. The free plan allows 50 per invocation, D1 calls included, and
+// the email handler has used about 15 by the time it gets here; 20 pushes plus the 3 D1 calls
+// around them leave room for an auto-reply. Most recently active devices go first.
+export const MAX_PUSHES_PER_MESSAGE = 20;
+
+type Outcome = 'sent' | 'gone' | 'failed';
+
+interface Sender {
+  publicKey: string;
+  privateKey: CryptoKey;
+  subject: string;
+}
+
+// Resolved once per message, not once per push.
+async function pushSender(env: Env): Promise<Sender> {
+  const { publicKey, privateKey } = await getOrGenerateVapidKeys(env);
+  return { publicKey, privateKey, subject: await getVapidSubject(env) };
+}
+
+// One push. Never throws, and leaves the database alone: the caller records all outcomes at once.
+async function deliver(sender: Sender, sub: PushSubscriptionRow, payload: PushPayload): Promise<Outcome> {
   // Routes validate endpoints already; this keeps any other row from reaching fetch().
   if (!isPushEndpoint(sub.endpoint)) {
     log('webpush.endpoint_refused', { id: sub.id });
-    return false;
+    return 'failed';
   }
   try {
-    const { publicKey, privateKey } = await getOrGenerateVapidKeys(env);
-    const subject = await getVapidSubject(env);
-    const authHeader = await createVapidAuthHeader(sub.endpoint, privateKey, publicKey, subject);
-    const bodyBytes = await encryptPayload(sub.p256dh, sub.auth, payload);
-
     const res = await fetch(sub.endpoint, {
       method: 'POST',
       headers: {
@@ -204,33 +219,58 @@ export async function sendWebPush(env: Env, sub: PushSubscriptionRow, payload: P
         'Content-Encoding': 'aes128gcm',
         'TTL': '86400',
         'Urgency': 'high',
-        'Authorization': authHeader,
+        'Authorization': await createVapidAuthHeader(sub.endpoint, sender.privateKey, sender.publicKey, sender.subject),
       },
-      body: bodyBytes,
+      body: await encryptPayload(sub.p256dh, sub.auth, payload),
     });
-
     if (res.status === 404 || res.status === 410) {
-      // Endpoint is expired or unregistered; clean it up from database
-      log('webpush.prune_expired', { endpoint: sub.endpoint, status: res.status });
-      await run(env.DB, 'DELETE FROM push_subscriptions WHERE id = ?', sub.id);
-      return false;
+      // The browser dropped this subscription.
+      log('webpush.prune_expired', { id: sub.id, status: res.status });
+      return 'gone';
     }
-
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      logError('webpush.send_failed', new Error(`Push server returned ${res.status}: ${text}`), {
-        endpoint: sub.endpoint,
-        status: res.status,
-      });
-      return false;
+      logError('webpush.send_failed', new Error(`Push server returned ${res.status}: ${text.slice(0, 200)}`), { id: sub.id, status: res.status });
+      return 'failed';
     }
-
-    await run(env.DB, 'UPDATE push_subscriptions SET last_used_at = ? WHERE id = ?', Date.now(), sub.id);
-    return true;
+    return 'sent';
   } catch (e) {
-    logError('webpush.error', e, { endpoint: sub.endpoint });
-    return false;
+    logError('webpush.error', e, { id: sub.id });
+    return 'failed';
   }
+}
+
+// Sends one payload to many subscriptions, then records the outcomes in a single D1 batch.
+async function sendAll(env: Env, subs: PushSubscriptionRow[], payload: PushPayload): Promise<number> {
+  if (!subs.length) return 0;
+  let sender: Sender;
+  try {
+    sender = await pushSender(env);
+  } catch (e) {
+    logError('webpush.keys_failed', e);
+    return 0;
+  }
+  const outcomes = await Promise.all(subs.map((sub) => deliver(sender, sub, payload)));
+  const now = Date.now();
+  const stmts = subs.flatMap((sub, i) =>
+    outcomes[i] === 'gone'
+      ? [env.DB.prepare('DELETE FROM push_subscriptions WHERE id = ?').bind(sub.id)]
+      : outcomes[i] === 'sent'
+        ? [env.DB.prepare('UPDATE push_subscriptions SET last_used_at = ? WHERE id = ?').bind(now, sub.id)]
+        : [],
+  );
+  if (stmts.length) await env.DB.batch(stmts);
+  return outcomes.filter((o) => o === 'sent').length;
+}
+
+export async function sendWebPush(env: Env, sub: PushSubscriptionRow, payload: PushPayload): Promise<boolean> {
+  return (await sendAll(env, [sub], payload)) === 1;
+}
+
+function capped(subs: PushSubscriptionRow[], fields: Record<string, unknown>): PushSubscriptionRow[] {
+  if (subs.length <= MAX_PUSHES_PER_MESSAGE) return subs;
+  log('webpush.capped', { ...fields, limit: MAX_PUSHES_PER_MESSAGE });
+  return subs.slice(0, MAX_PUSHES_PER_MESSAGE);
 }
 
 export async function notifyMailboxMembers(env: Env, mailboxId: number, payload: PushPayload): Promise<void> {
@@ -240,22 +280,21 @@ export async function notifyMailboxMembers(env: Env, mailboxId: number, payload:
      FROM push_subscriptions s
      JOIN mailbox_members m ON m.user_id = s.user_id
      JOIN users u ON u.id = s.user_id AND u.status = 'active'
-     WHERE m.mailbox_id = ?`,
+     WHERE m.mailbox_id = ?
+     ORDER BY s.last_used_at DESC, s.id DESC LIMIT ?`,
     mailboxId,
+    MAX_PUSHES_PER_MESSAGE + 1,
   );
-
-  if (!subscriptions.length) return;
-
-  await Promise.allSettled(subscriptions.map((sub) => sendWebPush(env, sub, payload)));
+  await sendAll(env, capped(subscriptions, { mailboxId }), payload);
 }
 
 export async function notifyUser(env: Env, userId: number, payload: PushPayload): Promise<number> {
   const subscriptions = await all<PushSubscriptionRow>(
     env.DB,
-    "SELECT s.* FROM push_subscriptions s JOIN users u ON u.id = s.user_id AND u.status = 'active' WHERE s.user_id = ?",
+    `SELECT s.* FROM push_subscriptions s JOIN users u ON u.id = s.user_id AND u.status = 'active'
+     WHERE s.user_id = ? ORDER BY s.last_used_at DESC, s.id DESC LIMIT ?`,
     userId,
+    MAX_PUSHES_PER_MESSAGE + 1,
   );
-  if (!subscriptions.length) return 0;
-  const results = await Promise.allSettled(subscriptions.map((sub) => sendWebPush(env, sub, payload)));
-  return results.filter((r) => r.status === 'fulfilled' && r.value).length;
+  return sendAll(env, capped(subscriptions, { userId }), payload);
 }
