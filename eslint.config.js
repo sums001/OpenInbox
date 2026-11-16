@@ -24,6 +24,10 @@ export default defineConfig(
     },
   },
   {
+    files: ['src/web/public/sw.js'],
+    languageOptions: { globals: globals.serviceworker },
+  },
+  {
     files: ['scripts/**', 'test/mock/**', 'test/e2e/**', '*.config.{js,ts}'],
     languageOptions: { globals: globals.node },
   },

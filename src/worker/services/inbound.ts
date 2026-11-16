@@ -460,12 +460,12 @@ async function sideEffects(c: Context, o: IngestOptions, mailboxId: number, thre
   // Web Push notification to user devices (phone / desktop)
   const isInbox = (actions.folder ?? o.folderOverride ?? 'inbox') === 'inbox' && !actions.markRead && !o.markRead;
   if (isInbox) {
+    // No subject or body text: notifications show on lock screens, and the payload passes
+    // through the browser vendor's push service (encrypted, but still).
     const sender = p.from.name || p.from.address;
-    const subject = p.subject.trim() || '(No subject)';
-    const snippet = makeSnippet(p.text);
     const push = notifyMailboxMembers(env, mailboxId, {
-      title: `${subject} · ${sender}`,
-      body: snippet || 'New message received',
+      title: 'New mail',
+      body: sender ? `From ${sender}` : 'You have a new message.',
       url: `/mail/all/inbox/${threadId}`,
       threadId,
       tag: `thread-${threadId}`,

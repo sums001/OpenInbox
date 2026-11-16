@@ -23,7 +23,7 @@ import {
   updateUserSchema,
 } from '../../shared/schemas';
 import { all, first, run } from '../db/db';
-import { loadSettings, saveSettings, type AppSettings } from '../db/settings';
+import { loadSettings, rawSetting, saveSettings, setRawSetting, type AppSettings } from '../db/settings';
 import { clientIp, currentUser } from '../auth/middleware';
 import { badRequest, conflict, errorMessage, HttpError, notFound } from '../lib/errors';
 import { decrypt, encrypt, encryptJson } from '../lib/crypto';
@@ -554,6 +554,12 @@ admin.post('/reencrypt', async (c) => {
   const users = await all<{ id: number; totp_secret: string }>(db, 'SELECT id, totp_secret FROM users WHERE totp_secret IS NOT NULL');
   for (const u of users) {
     await run(db, 'UPDATE users SET totp_secret = ? WHERE id = ?', await encrypt(env, await decrypt(env, u.totp_secret)), u.id);
+    count++;
+  }
+  // The Web Push key: losing it would silently stop notifications on every subscribed device.
+  const vapid = await rawSetting(db, 'vapid.private_key');
+  if (vapid) {
+    await setRawSetting(db, 'vapid.private_key', await encrypt(env, await decrypt(env, vapid)));
     count++;
   }
   const s = await loadSettings(db, true);
