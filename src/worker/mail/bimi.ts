@@ -52,6 +52,22 @@ export function dmarcEnforced(record: string | null): boolean {
   return (tags.get('p') === 'quarantine' || tags.get('p') === 'reject') && (tags.get('pct') ?? '100') === '100' && tags.get('sp') !== 'none';
 }
 
+// The record with an enforced policy that keeps its other tags (reports, alignment): p=quarantine
+// unless it already rejects, applied to all mail (pct dropped), subdomains no longer exempted.
+export function enforcedDmarc(record: string | null): string {
+  const tags = (record ?? '')
+    .split(';')
+    .filter((t) => t.includes('='))
+    .map((t) => {
+      const i = t.indexOf('=');
+      return [t.slice(0, i).trim().toLowerCase(), t.slice(i + 1).trim()] as const;
+    })
+    .filter(([name, value]) => name && value && name !== 'v');
+  const p = tags.find(([name]) => name === 'p')?.[1].toLowerCase() === 'reject' ? 'reject' : 'quarantine';
+  const rest = tags.filter(([name, value]) => name !== 'p' && name !== 'pct' && !(name === 'sp' && value.toLowerCase() === 'none'));
+  return ['v=DMARC1', `p=${p}`, ...rest.map(([name, value]) => `${name}=${value}`)].join('; ');
+}
+
 export function bimiRecord(logoUrl: string, certificateUrl: string | null): string {
   return certificateUrl ? `v=BIMI1; l=${logoUrl}; a=${certificateUrl}` : `v=BIMI1; l=${logoUrl}`;
 }

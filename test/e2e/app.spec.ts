@@ -85,13 +85,34 @@ test('setup, send, receive, reply, search and isolate members', async ({ page, b
   await page.getByRole('button', { name: 'Done' }).click();
   await expect(page.getByText('Verified for sending')).toBeVisible();
 
-  // 3. Add a member with their own inbox.
+  // The sender logo dialog fixes what keeps mail apps from showing a logo: here the p=none DMARC
+  // policy setup added.
+  await page.goto('/admin/domains');
+  await page.getByRole('button', { name: 'Add a logo' }).click();
+  await expect(page.getByText("DMARC isn't enforced")).toBeVisible();
+  await page.getByRole('button', { name: 'Fix' }).click();
+  await expect(page.getByText('_dmarc.example.com becomes')).toContainText('v=DMARC1; p=quarantine');
+  await page.getByRole('button', { name: 'Enforce DMARC' }).click();
+  await expect(page.getByText('DMARC is enforced')).toBeVisible();
+  // A logo can also come from an address; the server checks it first.
+  await page.getByRole('textbox', { name: 'Logo address' }).fill('http://example.com/logo.svg');
+  await page.getByRole('button', { name: 'Load' }).click();
+  await expect(page.getByText('Use an https:// address.')).toBeVisible();
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
+
+  // 3. Add a member with their own inbox. The dialog loads the domains itself: while they are on
+  // the way it must not submit without one.
+  await page.route('**/api/admin/domains', async (route) => {
+    await new Promise((r) => setTimeout(r, 1000));
+    await route.continue();
+  });
   await page.goto('/admin/users');
   await page.getByRole('button', { name: 'Add a user' }).click();
   await page.locator('#name').fill('Bob Member');
   await page.locator('#local').fill('bob');
   await page.getByRole('button', { name: 'Add user', exact: true }).click();
   await expect(page.getByText('Share these sign-in details')).toBeVisible();
+  await page.unroute('**/api/admin/domains');
   const bobPassword = (await page.getByRole('dialog').locator('.font-mono').textContent())!.trim();
   await page.getByRole('button', { name: 'Done' }).click();
   await expect(page.getByText('bob@example.com').first()).toBeVisible();
@@ -176,4 +197,18 @@ test('setup, send, receive, reply, search and isolate members', async ({ page, b
   const adminApi = await bob.request.get(`${APP}/api/admin/overview`);
   expect(adminApi.status()).toBe(403);
   await bobCtx.close();
+
+  // 8. Select all conversations: more than one page, archived in batches on the server.
+  for (let i = 0; i < 55; i++) {
+    expect(await deliver(mail({ from: 'News <news@acme.test>', to: 'admin@example.com', subject: `Weekly digest ${i}`, body: 'This week.', id: `digest-${i}@acme.test` }), 'news@acme.test', 'admin@example.com')).toBe(200);
+  }
+  await page.goto('/mail/all/inbox');
+  await expect(page.getByText('Weekly digest 54')).toBeVisible();
+  await page.getByRole('checkbox', { name: 'Select all' }).click();
+  await expect(page.getByText('All 50 loaded conversations are selected.')).toBeVisible();
+  await page.getByRole('button', { name: /Select all \d+ conversations in Inbox/ }).click();
+  await expect(page.getByText(/All \d+ conversations in Inbox are selected\./)).toBeVisible();
+  await page.getByRole('button', { name: 'Archive', exact: true }).click();
+  await expect(page.getByText(/Archived · \d+ conversations/)).toBeVisible();
+  await expect(page.getByText('Inbox zero')).toBeVisible();
 });

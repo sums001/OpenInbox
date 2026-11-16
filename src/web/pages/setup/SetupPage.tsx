@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router';
 import { ArrowLeft, Check, ChevronDown, CircleCheck, CircleDashed, CircleX, Cloud, Download, ExternalLink, KeyRound, LoaderCircle, Mail, RefreshCw, ShieldCheck, Sparkles, TriangleAlert, X } from 'lucide-react';
 import { ApiError, errorText, get, post } from '../../lib/api';
 import { cn, downloadBlob } from '../../lib/utils';
+import { runDomainSetup } from '../../lib/domain-setup';
 import { ACCOUNT_TOKENS_URL, tokenTemplateUrl, TOKEN_PERMISSIONS } from '../../../shared/constants';
 import type { DomainSetupStep, PermissionCheck, ZoneInspection } from '../../lib/types';
 import { LogoMark } from '../../components/Logo';
@@ -833,19 +834,9 @@ function DomainStage({ claim, onDone }: { claim: { domainId: number; address: st
       setRunning(true);
       setError('');
       try {
-        for (let i = 0; i < 6; i++) {
-          const r = await post<{ steps: DomainSetupStep[]; done: boolean }>(`/admin/domains/${claim.domainId}/setup`);
-          setSteps(r.steps);
-          if (r.done) {
-            onDone();
-            return;
-          }
-          const failed = r.steps.find((s) => s.status === 'error');
-          if (failed) {
-            setError(failed.message ?? 'A step failed.');
-            return;
-          }
-        }
+        const r = await runDomainSetup(claim.domainId, setSteps);
+        if (r.done) onDone();
+        else if (r.error) setError(r.error);
       } catch (err) {
         setError(err instanceof ApiError ? err.message : errorText(err));
       } finally {

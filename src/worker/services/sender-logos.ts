@@ -78,7 +78,8 @@ async function findRecord(domain: string, prefix: string, match: (r: string) => 
   return null;
 }
 
-async function readLimited(res: Response, max: number): Promise<string | null> {
+// The body as text, or null when it is larger than max (also for the admin's logo address, services/bimi.ts).
+export async function readLimited(res: Response, max: number): Promise<string | null> {
   if (Number(res.headers.get('content-length') ?? 0) > max || !res.body) return null;
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
