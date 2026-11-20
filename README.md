@@ -73,8 +73,10 @@ OpenInbox is built for everyday conversations. It is not a bulk or marketing sen
 **Mail**
 - Receive on any domain in your Cloudflare account. Email Routing is set up for you.
 - Send through Resend, Brevo, Mailjet, Cloudflare Email Sending or any SMTP server. When one provider hits its free limit, mail falls back to another.
+- Mail your other apps send through Resend (over its SMTP or API) counts toward its limit, and shows in Sent when it comes from an address with a mailbox.
 - Threads, All Mail, search (`from:` `has:attachment` `before:`), labels, filters, snooze, scheduled and undo send.
 - Command palette and keyboard shortcuts, dark mode, mobile layout.
+- [Inbox API](API.md): per-user API keys to read, search, organize and send mail from scripts and apps.
 
 **Teams**
 - Unlimited users, with personal and shared inboxes.
@@ -241,7 +243,6 @@ If your copy was created before automatic updates were removed, its workflow sti
 
 These are planned or in progress and are **not available yet**:
 
-- [ ] **Inbox API:** a REST API with per-user API keys to list, read, search and send mail, so apps, scripts and automations can use your mailboxes.
 - [ ] **AI email writing** with [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/): draft replies, rewrite or shorten text, change tone and summarize long threads, using Workers AI's free daily allowance in your own account.
 - [ ] **Webhooks** for incoming mail.
 
