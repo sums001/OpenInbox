@@ -136,7 +136,12 @@ function GeneralSettings() {
 const row = 'flex items-center gap-2.5 border-b border-border px-5 py-2.5 text-[13px]';
 
 function ForwardingSettings() {
-  const q = useQuery({ queryKey: ['admin', 'forwarding'], queryFn: () => get<{ address: string; verified: boolean }[]>('/admin/forwarding') });
+  const q = useQuery({
+    queryKey: ['admin', 'forwarding'],
+    queryFn: () => get<{ address: string; verified: boolean }[]>('/admin/forwarding'),
+    // The owner clicks the verification link in their own mail, then comes back to this tab.
+    refetchOnWindowFocus: (query) => !!query.state.data?.some((d) => !d.verified),
+  });
   const [email, setEmail] = useState('');
   const { run, busy } = useAction();
   return (
