@@ -7,6 +7,7 @@ import {
   addDomainSchema,
   aliasSchema,
   appDomainSchema,
+  logoUrlSchema,
   senderLogoSchema,
   createMailboxSchema,
   createUserSchema,
@@ -72,7 +73,7 @@ import {
 } from '../services/providers';
 import { listSuppressions, removeSuppression } from '../services/webhooks';
 import { retryMessage } from '../services/send';
-import { getSenderLogo, removeSenderLogo, setSenderLogo } from '../services/bimi';
+import { enforceDmarc, fetchLogo, getSenderLogo, removeSenderLogo, setSenderLogo } from '../services/bimi';
 import { noteRecentSenders } from '../services/sender-logos';
 import { deleteBlobs } from '../services/threads';
 import { Cloudflare, cfFromEnv, DEFAULT_CF_API } from '../cloudflare/client';
@@ -305,6 +306,19 @@ admin.put('/domains/:id/logo', async (c) => {
   const r = await setSenderLogo(c.env, settings, appBase(c, settings), intParam(c, 'id'), await body(c, senderLogoSchema));
   await audit(c.env.DB, { userId: currentUser(c).id, action: 'domain.logo_set', target: r.record.name, ip: clientIp(c) });
   return c.json(r);
+});
+
+admin.post('/domains/:id/logo/fetch', async (c) => {
+  await getDomain(c.env.DB, intParam(c, 'id'));
+  const { url } = await body(c, logoUrlSchema);
+  return c.json({ svg: await fetchLogo(url) });
+});
+
+admin.post('/domains/:id/dmarc/enforce', async (c) => {
+  const d = await getDomain(c.env.DB, intParam(c, 'id'));
+  const dmarc = await enforceDmarc(c.env, await settingsOf(c), d.id);
+  await audit(c.env.DB, { userId: currentUser(c).id, action: 'domain.dmarc_enforced', target: d.name, details: { record: dmarc.record }, ip: clientIp(c) });
+  return c.json(dmarc);
 });
 
 admin.delete('/domains/:id/logo', async (c) => {
