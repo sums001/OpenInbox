@@ -168,7 +168,7 @@ export interface DomainInfo {
 export interface SenderLogo {
   logo: { url: string; certificateUrl: string | null; updatedAt: number } | null;
   record: { name: string; expected: string | null; current: string | null };
-  dmarc: { record: string | null; enforced: boolean };
+  dmarc: { record: string | null; enforced: boolean; fix: string | null };
   https: boolean;
 }
 

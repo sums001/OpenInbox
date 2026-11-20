@@ -129,16 +129,70 @@ function decodeCursor(cursor: string | null | undefined): { t: number; id: numbe
 }
 
 export async function listThreads(db: D1Database, p: ListParams): Promise<{ threads: ThreadSummary[]; nextCursor: string | null }> {
+  const { rows, nextCursor } = await viewPage<ThreadRow>(db, p, COLUMNS);
+  const threads = await withLabels(db, rows);
+  return { threads: p.view === 'sent' ? await withSentStatus(db, threads) : threads, nextCursor };
+}
+
+// The sort columns are always selected so the next cursor can be built.
+const ID_COLUMNS = 'id, mailbox_id, last_message_at, last_sent_at, snoozed_until';
+
+// One page of a view's thread ids, for actions on every conversation in it (the client calls again
+// with the cursor until it is null, so each request stays small).
+export async function viewThreadIds(db: D1Database, p: ListParams): Promise<{ threads: { id: number; mailboxId: number }[]; nextCursor: string | null }> {
+  if (p.view === 'scheduled') throw badRequest('This view cannot be selected as a whole.');
+  const { rows, nextCursor } = await viewPage<ThreadRow>(db, p, ID_COLUMNS);
+  return { threads: rows.map((r) => ({ id: r.id, mailboxId: r.mailbox_id })), nextCursor };
+}
+
+// How many conversations a view holds, up to `cap` (each mailbox reads at most cap + 1 index rows).
+export async function countView(db: D1Database, p: ListParams, cap = 10_000): Promise<{ count: number; capped: boolean }> {
+  if (!p.mailboxIds.length) return { count: 0, capped: false };
+  let count: number;
+  if (p.view === 'label') {
+    if (!p.labelId) throw badRequest('Missing label.');
+    const r = await first<{ n: number }>(
+      db,
+      `SELECT COUNT(*) AS n FROM (SELECT 1 FROM thread_labels tl JOIN threads t ON t.id = tl.thread_id
+        WHERE tl.label_id = ? AND t.mailbox_id IN (${placeholders(p.mailboxIds.length)}) AND t.folder != 'trash' LIMIT ?)`,
+      p.labelId,
+      ...p.mailboxIds,
+      cap + 1,
+    );
+    count = r?.n ?? 0;
+  } else if (p.view === 'scheduled') {
+    throw badRequest('This view cannot be counted.');
+  } else {
+    const { where } = p.view === 'assigned' ? { where: "assigned_to = ? AND folder != 'trash'" } : viewSql(p.view);
+    const parts: string[] = [];
+    const params: (number | string)[] = [];
+    for (const m of p.mailboxIds) {
+      parts.push(`SELECT COUNT(*) AS n FROM (SELECT 1 FROM threads WHERE mailbox_id = ? AND ${where} LIMIT ?)`);
+      params.push(m);
+      if (p.view === 'assigned') params.push(p.userId ?? 0);
+      params.push(cap + 1);
+    }
+    const rows = await all<{ n: number }>(db, parts.join(' UNION ALL '), ...params);
+    count = rows.reduce((s, r) => s + r.n, 0);
+  }
+  return { count: Math.min(count, cap), capped: count > cap };
+}
+
+async function viewPage<T extends Pick<ThreadRow, 'id' | 'last_message_at' | 'last_sent_at' | 'snoozed_until'>>(
+  db: D1Database,
+  p: ListParams,
+  columns: string,
+): Promise<{ rows: T[]; nextCursor: string | null }> {
   const limit = Math.min(Math.max(p.limit ?? 50, 1), 100);
-  if (!p.mailboxIds.length) return { threads: [], nextCursor: null };
+  if (!p.mailboxIds.length) return { rows: [], nextCursor: null };
   const cursor = decodeCursor(p.cursor);
-  let rows: ThreadRow[];
+  let rows: T[];
 
   if (p.view === 'label') {
     if (!p.labelId) throw badRequest('Missing label.');
-    rows = await all<ThreadRow>(
+    rows = await all<T>(
       db,
-      `SELECT ${COLUMNS.split(', ').map((c) => `t.${c}`).join(', ')} FROM thread_labels tl JOIN threads t ON t.id = tl.thread_id
+      `SELECT ${columns.split(', ').map((c) => `t.${c}`).join(', ')} FROM thread_labels tl JOIN threads t ON t.id = tl.thread_id
         WHERE tl.label_id = ? AND t.mailbox_id IN (${placeholders(p.mailboxIds.length)}) AND t.folder != 'trash'
           ${cursor ? 'AND (t.last_message_at < ? OR (t.last_message_at = ? AND t.id < ?))' : ''}
         ORDER BY t.last_message_at DESC, t.id DESC LIMIT ?`,
@@ -154,7 +208,7 @@ export async function listThreads(db: D1Database, p: ListParams): Promise<{ thre
       ...p.mailboxIds,
     );
     rows = ids.length
-      ? await all<ThreadRow>(db, `SELECT ${COLUMNS} FROM threads WHERE id IN (${placeholders(ids.length)}) ORDER BY last_message_at DESC`, ...ids.map((i) => i.thread_id))
+      ? await all<T>(db, `SELECT ${columns} FROM threads WHERE id IN (${placeholders(ids.length)}) ORDER BY last_message_at DESC`, ...ids.map((i) => i.thread_id))
       : [];
   } else {
     const { where, sort } = p.view === 'assigned' ? { where: "assigned_to = ? AND folder != 'trash'", sort: 'last_message_at' } : viewSql(p.view);
@@ -163,7 +217,7 @@ export async function listThreads(db: D1Database, p: ListParams): Promise<{ thre
     const params: (number | string)[] = [];
     for (const m of p.mailboxIds) {
       parts.push(
-        `SELECT * FROM (SELECT ${COLUMNS} FROM threads WHERE mailbox_id = ? AND ${where}
+        `SELECT * FROM (SELECT ${columns} FROM threads WHERE mailbox_id = ? AND ${where}
           ${cursor ? `AND (${sort} < ? OR (${sort} = ? AND id < ?))` : ''} ORDER BY ${sort} DESC, id DESC LIMIT ?)`,
       );
       params.push(m);
@@ -171,14 +225,13 @@ export async function listThreads(db: D1Database, p: ListParams): Promise<{ thre
       if (cursor) params.push(cursor.t, cursor.t, cursor.id);
       params.push(limit + 1);
     }
-    rows = await all<ThreadRow>(db, `${parts.join(' UNION ALL ')} ORDER BY ${sort} DESC, id DESC LIMIT ?`, ...params, limit + 1);
+    rows = await all<T>(db, `${parts.join(' UNION ALL ')} ORDER BY ${sort} DESC, id DESC LIMIT ?`, ...params, limit + 1);
   }
   const more = rows.length > limit;
   const page = rows.slice(0, limit);
   const last = page[page.length - 1];
   const sortKey = p.view === 'sent' ? last?.last_sent_at : p.view === 'snoozed' ? last?.snoozed_until : last?.last_message_at;
-  const threads = await withLabels(db, page);
-  return { threads: p.view === 'sent' ? await withSentStatus(db, threads) : threads, nextCursor: more && last ? `${sortKey}.${last.id}` : null };
+  return { rows: page, nextCursor: more && last ? `${sortKey}.${last.id}` : null };
 }
 
 // One indexed lookup per conversation of the page (messages_thread). Opens count as in the thread

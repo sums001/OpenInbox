@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mergeSpf, spfLookupCount, unquoteTxt } from '../../src/worker/cloudflare/spf';
 import { planRecords, quoteTxt, type CfDnsRecord } from '../../src/worker/cloudflare/dns';
-import { bimiRecord, checkBimiSvg, checkCertificate, dmarcEnforced } from '../../src/worker/mail/bimi';
+import { bimiRecord, checkBimiSvg, checkCertificate, dmarcEnforced, enforcedDmarc } from '../../src/worker/mail/bimi';
 import { orgDomain, recordTag, senderDomain } from '../../src/worker/services/sender-logos';
 import { base32Decode, base32Encode, totpCode, verifyTotp } from '../../src/worker/lib/totp';
 import { loginNetwork } from '../../src/worker/auth/rate-limit';
@@ -103,6 +103,19 @@ describe('sender logos (BIMI)', () => {
     expect(dmarcEnforced('v=DMARC1; p=quarantine; pct=50')).toBe(false);
     expect(dmarcEnforced('v=DMARC1; p=reject; sp=none')).toBe(false);
     expect(dmarcEnforced(null)).toBe(false);
+
+    // The one-click fix keeps reports and alignment, and always ends up enforced.
+    const enforce = {
+      'v=DMARC1; p=none; rua=mailto:rua@dmarc.brevo.com': 'v=DMARC1; p=quarantine; rua=mailto:rua@dmarc.brevo.com',
+      'v=DMARC1; p=reject; pct=50; sp=none; adkim=s': 'v=DMARC1; p=reject; adkim=s',
+      'v=DMARC1; p=quarantine; sp=quarantine; pct=20': 'v=DMARC1; p=quarantine; sp=quarantine',
+      'v=DMARC1;; P = None ; stray ;fo=1': 'v=DMARC1; p=quarantine; fo=1',
+    };
+    for (const [before, after] of Object.entries(enforce)) {
+      expect(enforcedDmarc(before)).toBe(after);
+      expect(dmarcEnforced(after)).toBe(true);
+    }
+    expect(enforcedDmarc(null)).toBe('v=DMARC1; p=quarantine');
 
     expect(bimiRecord('https://a.test/l.svg', null)).toBe('v=BIMI1; l=https://a.test/l.svg');
     expect(bimiRecord('https://a.test/l.svg', 'https://a.test/c.pem')).toBe('v=BIMI1; l=https://a.test/l.svg; a=https://a.test/c.pem');

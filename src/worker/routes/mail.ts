@@ -10,6 +10,7 @@ import {
   noteSchema,
   threadActionSchema,
   updateMailboxSchema,
+  viewActionSchema,
 } from '../../shared/schemas';
 import { all, first, placeholders, run } from '../db/db';
 import { loadSettings } from '../db/settings';
@@ -19,7 +20,18 @@ import { badRequest, forbidden, HttpError, notFound } from '../lib/errors';
 import { newId } from '../lib/ids';
 import { parseJson } from '../lib/json';
 import { FOLDERS, type Folder } from '../../shared/constants';
-import { applyThreadAction, getThread, listThreads, messageBody, searchThreads, unreadCounts } from '../services/threads';
+import {
+  applyThreadAction,
+  countView,
+  getThread,
+  listThreads,
+  messageBody,
+  searchThreads,
+  unreadCounts,
+  viewThreadIds,
+  type ListParams,
+  type ThreadAction,
+} from '../services/threads';
 import { getMailbox, mailboxSettings, updateMailbox, bumpState } from '../services/mailboxes';
 import { attachmentBytes } from '../services/send';
 import { contentDisposition, isInlineSafe } from '../mail/decode';
@@ -100,6 +112,15 @@ mail.get('/threads', async (c) => {
   return c.json(await listThreads(c.env.DB, { mailboxIds, view, labelId, userId: currentUser(c).id, cursor: c.req.query('cursor') }));
 });
 
+// How many conversations a whole view holds, for "Select all 1,240 conversations".
+mail.get('/threads/count', async (c) => {
+  const mailboxIds = await mailboxScope(c, c.req.query('mailbox'));
+  const view = (c.req.query('view') ?? 'inbox') as ListParams['view'];
+  if (![...FOLDERS, 'label', 'assigned'].includes(view)) throw badRequest('Unknown view.');
+  const labelId = c.req.query('label') ? Number(c.req.query('label')) : undefined;
+  return c.json(await countView(c.env.DB, { mailboxIds, view, labelId, userId: currentUser(c).id }));
+});
+
 mail.get('/threads/:id', async (c) => {
   const user = currentUser(c);
   const t = await assertThread(c.env.DB, user, intParam(c, 'id'));
@@ -119,30 +140,65 @@ mail.get('/sender-logos/:domain', async (c) => {
   });
 });
 
+// D1 allows 100 bound parameters per query, so thread ids go to the database in chunks.
+const ACTION_CHUNK = 90;
+
+async function runThreadAction(
+  c: Context<AppBindings>,
+  threads: { id: number; mailboxId: number }[],
+  input: { action: ThreadAction; labelId?: number; until?: number; userId?: number | null },
+): Promise<void> {
+  if (!threads.length) return;
+  if (input.action === 'assign' && input.userId) {
+    const boxes = [...new Set(threads.map((t) => t.mailboxId))];
+    const member = await all<{ mailbox_id: number }>(
+      c.env.DB,
+      `SELECT mailbox_id FROM mailbox_members WHERE user_id = ? AND mailbox_id IN (${placeholders(boxes.length)})`,
+      input.userId,
+      ...boxes,
+    );
+    if (member.length !== boxes.length) throw badRequest('That person is not a member of this mailbox.');
+  }
+  const settings = await loadSettings(c.env.DB);
+  for (let i = 0; i < threads.length; i += ACTION_CHUNK) {
+    await applyThreadAction(c.env, settings, threads.slice(i, i + ACTION_CHUNK), input.action, { labelId: input.labelId, until: input.until, userId: input.userId });
+  }
+}
+
 mail.post('/threads/actions', async (c) => {
   const user = currentUser(c);
   const input = await body(c, threadActionSchema);
-  const rows = await all<{ id: number; mailbox_id: number }>(
-    c.env.DB,
-    `SELECT t.id, t.mailbox_id FROM threads t JOIN mailbox_members mm ON mm.mailbox_id = t.mailbox_id AND mm.user_id = ? WHERE t.id IN (${placeholders(input.threadIds.length)})`,
-    user.id,
-    ...input.threadIds,
-  );
-  if (input.action === 'assign' && input.userId) {
-    const member = await all<{ mailbox_id: number }>(
+  const threads: { id: number; mailboxId: number }[] = [];
+  for (let i = 0; i < input.threadIds.length; i += ACTION_CHUNK) {
+    const ids = input.threadIds.slice(i, i + ACTION_CHUNK);
+    const rows = await all<{ id: number; mailbox_id: number }>(
       c.env.DB,
-      `SELECT mailbox_id FROM mailbox_members WHERE user_id = ? AND mailbox_id IN (${placeholders(rows.length || 1)})`,
-      input.userId,
-      ...(rows.length ? rows.map((r) => r.mailbox_id) : [0]),
+      `SELECT t.id, t.mailbox_id FROM threads t JOIN mailbox_members mm ON mm.mailbox_id = t.mailbox_id AND mm.user_id = ? WHERE t.id IN (${placeholders(ids.length)})`,
+      user.id,
+      ...ids,
     );
-    if (member.length !== new Set(rows.map((r) => r.mailbox_id)).size) throw badRequest('That person is not a member of this mailbox.');
+    threads.push(...rows.map((r) => ({ id: r.id, mailboxId: r.mailbox_id })));
   }
-  await applyThreadAction(c.env, await loadSettings(c.env.DB), rows.map((r) => ({ id: r.id, mailboxId: r.mailbox_id })), input.action, {
-    labelId: input.labelId,
-    until: input.until,
-    userId: input.userId,
+  await runThreadAction(c, threads, input);
+  return c.json({ ok: true, count: threads.length });
+});
+
+// An action on every conversation in a view, one batch per request: the web app calls again with
+// the returned cursor until it is null. Walking the view by its sort order means threads the action
+// moves out of the view, and mail arriving meanwhile, never shift the remaining pages.
+mail.post('/threads/actions/view', async (c) => {
+  const input = await body(c, viewActionSchema);
+  const mailboxIds = await mailboxScope(c, String(input.mailbox));
+  const { threads, nextCursor } = await viewThreadIds(c.env.DB, {
+    mailboxIds,
+    view: input.view,
+    labelId: input.label,
+    userId: currentUser(c).id,
+    cursor: input.cursor,
+    limit: ACTION_CHUNK,
   });
-  return c.json({ ok: true, count: rows.length });
+  await runThreadAction(c, threads, input);
+  return c.json({ count: threads.length, nextCursor });
 });
 
 mail.post('/threads/:id/notes', async (c) => {

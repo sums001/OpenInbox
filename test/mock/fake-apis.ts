@@ -465,6 +465,29 @@ function mailjet(state: FakeState, req: Request, path: string, body: any): Respo
     });
   }
   if (path === '/v3.1/send') {
+    // Like the real API, headers that Mailjet sets itself or that have their own property are refused.
+    const refused = Object.keys(body.Messages?.[0]?.Headers ?? {}).find((h) => /^(message-id|date|from|to|cc|bcc|subject|reply-to|list-id|x-mailer|user-agent)$/i.test(h));
+    if (refused) {
+      return json(
+        {
+          Messages: [
+            {
+              Status: 'error',
+              Errors: [
+                {
+                  ErrorIdentifier: crypto.randomUUID(),
+                  ErrorCode: 'send-0011',
+                  StatusCode: 400,
+                  ErrorMessage: 'Header cannot be customized using the "Headers" collection. Please use the dedicated property to set this header.',
+                  ErrorRelatedTo: [`Headers["${refused}"]`],
+                },
+              ],
+            },
+          ],
+        },
+        400,
+      );
+    }
     state.mailjet.emails.push(body);
     return json({ Messages: [{ Status: 'success', To: [{ Email: 'x', MessageUUID: crypto.randomUUID(), MessageID: state.seq++ }] }] });
   }

@@ -92,6 +92,8 @@ export const domainPatchSchema = z.object({
 });
 export const appDomainSchema = z.object({ subdomain: z.string().trim().min(1).max(63).default('mail') });
 // The Worker checks the BIMI profile and the exact size limits (src/worker/mail/bimi.ts).
+export const logoUrlSchema = z.object({ url: z.string().trim().url().max(2000) });
+
 export const senderLogoSchema = z.object({ svg: z.string().min(1).max(40_000).optional(), certificate: z.string().max(70_000).nullable().optional() });
 
 export const providerSchema = z.object({
@@ -145,9 +147,23 @@ export const composeSchema = z.object({
 
 export const sendSchema = z.object({ sendAt: z.number().int().nullable().optional() });
 
+const threadAction = z.enum(['read', 'unread', 'star', 'unstar', 'archive', 'inbox', 'spam', 'notspam', 'trash', 'delete', 'snooze', 'unsnooze', 'label', 'unlabel', 'assign']);
+
 export const threadActionSchema = z.object({
   threadIds: z.array(id).min(1).max(500),
-  action: z.enum(['read', 'unread', 'star', 'unstar', 'archive', 'inbox', 'spam', 'notspam', 'trash', 'delete', 'snooze', 'unsnooze', 'label', 'unlabel', 'assign']),
+  action: threadAction,
+  labelId: id.optional(),
+  until: z.number().int().optional(),
+  userId: id.nullable().optional(),
+});
+
+// An action on every conversation in a view, one batch per request (see routes/mail.ts).
+export const viewActionSchema = z.object({
+  mailbox: z.union([z.literal('all'), id]),
+  view: z.enum(['inbox', 'sent', 'drafts', 'starred', 'snoozed', 'archive', 'allmail', 'spam', 'trash', 'label', 'assigned']),
+  label: id.optional(),
+  cursor: z.string().max(64).nullable().optional(),
+  action: threadAction,
   labelId: id.optional(),
   until: z.number().int().optional(),
   userId: id.nullable().optional(),
