@@ -45,9 +45,17 @@ const tones: Record<Tone, string> = {
 const dots: Record<Tone, string> = { neutral: 'bg-faint', primary: 'bg-primary', success: 'bg-success', warning: 'bg-warning', danger: 'bg-danger' };
 
 // Tag-shaped badge; `pill` makes it round, for statuses.
-export function Badge({ tone = 'neutral', pill, children, className }: { tone?: Tone; pill?: boolean; children: ReactNode; className?: string }) {
+export function Badge({ tone = 'neutral', pill, size, children, className }: { tone?: Tone; pill?: boolean; size?: 'sm'; children: ReactNode; className?: string }) {
   return (
-    <span className={cn('inline-flex h-[22px] items-center gap-1.5 px-2 text-xs font-medium whitespace-nowrap [&>svg]:h-3 [&>svg]:w-3', pill ? 'rounded-full' : 'rounded-md', tones[tone], className)}>
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 font-medium whitespace-nowrap [&>svg]:h-3 [&>svg]:w-3',
+        size === 'sm' ? 'h-[18px] px-1.5 text-[11.5px]' : 'h-[22px] px-2 text-xs',
+        pill ? 'rounded-full' : 'rounded-md',
+        tones[tone],
+        className,
+      )}
+    >
       {children}
     </span>
   );

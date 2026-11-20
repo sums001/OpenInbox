@@ -25,6 +25,19 @@ export function viewQuery(view: string): string {
   return `view=${view}`;
 }
 
+// What became of a sent message, as one label: problems first, then the furthest step reached.
+// Opened needs open tracking; delivered needs the provider's delivery webhook.
+export function sentStatus(status: string, opened: boolean): { label: string; tone: 'neutral' | 'success' | 'danger' } | null {
+  if (status === 'failed') return { label: 'Not sent', tone: 'danger' };
+  if (status === 'bounced') return { label: 'Bounced', tone: 'danger' };
+  if (status === 'complained') return { label: 'Marked as spam', tone: 'danger' };
+  if (opened) return { label: 'Opened', tone: 'success' };
+  if (status === 'delivered') return { label: 'Delivered', tone: 'success' };
+  if (status === 'sent') return { label: 'Sent', tone: 'neutral' };
+  if (status === 'sending') return { label: 'Sending', tone: 'neutral' };
+  return null;
+}
+
 export function ownAddresses(mailboxes: Mailbox[]): Set<string> {
   return new Set(mailboxes.flatMap((m) => m.addresses.map((a) => a.address.toLowerCase())));
 }
