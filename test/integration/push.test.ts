@@ -157,6 +157,14 @@ describe('web push', () => {
     });
   });
 
+  it('audits turning push on and off, not the app re-sending its subscription', async () => {
+    const d = await subscribe(admin);
+    await subscribe(admin, d);
+    await admin.post('/api/account/push/unsubscribe', { endpoint: d.endpoint });
+    const actions = (await env.DB.prepare("SELECT action FROM audit_log WHERE action LIKE 'account.push_%' ORDER BY created_at").all<{ action: string }>()).results.map((r) => r.action);
+    expect(actions).toEqual(['account.push_enabled', 'account.push_disabled']);
+  });
+
   describe('inbound mail', () => {
     it('notifies every subscribed device of every member of the mailbox, and no one else', async () => {
       const bob = await member('Bob');
@@ -194,6 +202,34 @@ describe('web push', () => {
       const text = JSON.stringify(p);
       expect(text).not.toContain('Quarterly');
       expect(text).not.toContain('4242');
+    });
+
+    it('shows the sender and the subject to people who turned it on, and only to them', async () => {
+      const bob = await member('Bob');
+      await admin.post('/api/admin/mailboxes', {
+        localPart: 'team',
+        domainId,
+        kind: 'shared',
+        members: [{ userId: await userId('admin@example.com') }, { userId: bob.id }],
+      });
+      const adminPhone = await subscribe(admin);
+      const bobPhone = await subscribe(bob.client);
+      await bob.client.patch('/api/account', { preferences: { pushPreview: 'subject' } });
+      await deliver(email({ to: 'team@example.com', subject: 'Quarterly numbers' }), { from: 'ann@sender.test', to: 'team@example.com' });
+      expect(await pushesTo(fake.state, bobPhone)).toMatchObject([{ title: 'Ann Sender', body: 'Quarterly numbers' }]);
+      const [plain] = await pushesTo(fake.state, adminPhone);
+      expect(plain).toMatchObject({ title: 'New mail', body: 'From Ann Sender' });
+      expect(JSON.stringify(plain)).not.toContain('Quarterly');
+    });
+
+    it('sends at normal urgency with one topic per conversation', async () => {
+      const d = await subscribe(admin);
+      await deliver(email({ subject: 'Hello' }), { from: 'ann@sender.test', to: 'admin@example.com' });
+      const { threads } = await admin.get('/api/threads?mailbox=all&view=inbox');
+      const [sent] = fake.state.push.received.filter((p) => p.endpoint === d.endpoint);
+      const header = (name: string) => Object.entries(sent.headers).find(([k]) => k.toLowerCase() === name)?.[1];
+      expect(header('urgency')).toBe('normal');
+      expect(header('topic')).toBe(`thread-${threads[0].id}`);
     });
 
     it('does not notify disabled members', async () => {

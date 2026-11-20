@@ -134,6 +134,8 @@ account.post('/push/subscribe', async (c) => {
   const input = await body(c, pushSubscriptionSchema);
   const now = Date.now();
   const userAgent = c.req.header('user-agent') ?? null;
+  // The app re-sends its subscription now and then (lib/push.ts); only a new one is audited.
+  const known = await first(c.env.DB, 'SELECT 1 FROM push_subscriptions WHERE endpoint = ? AND user_id = ?', input.endpoint, user.id);
 
   await run(
     c.env.DB,
@@ -154,22 +156,24 @@ account.post('/push/subscribe', async (c) => {
     now,
     now,
   );
-
+  if (!known) await audit(c.env.DB, { userId: user.id, action: 'account.push_enabled', details: { host: new URL(input.endpoint).host }, ip: clientIp(c) });
   return c.json({ ok: true });
 });
 
 account.post('/push/unsubscribe', async (c) => {
   const user = currentUser(c);
   const input = await body(c, pushUnsubscribeSchema);
-  await run(c.env.DB, 'DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?', user.id, input.endpoint);
+  const r = await run(c.env.DB, 'DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?', user.id, input.endpoint);
+  if (r.meta.changes) await audit(c.env.DB, { userId: user.id, action: 'account.push_disabled', details: { host: new URL(input.endpoint).host }, ip: clientIp(c) });
   return c.json({ ok: true });
 });
 
 account.post('/push/test', async (c) => {
   const user = currentUser(c);
   const count = await notifyUser(c.env, user.id, {
-    title: 'OpenInbox Notification Test · OpenInbox Team',
-    body: 'Push notifications are working properly on this device!',
+    title: 'Test notification',
+    body: 'Notifications for new mail work on this device.',
+    tag: 'openinbox-test',
     url: '/mail/all/inbox',
   });
   return c.json({ ok: true, sent: count });

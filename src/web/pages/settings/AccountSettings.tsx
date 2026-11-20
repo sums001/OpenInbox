@@ -95,6 +95,17 @@ function Appearance() {
   const [isStandalone] = useState(() => isStandalonePwa());
   const [pushActive, setPushActive] = useState<boolean | null>(null);
   const [busyPush, setBusyPush] = useState(false);
+  const user = useUser();
+  const refreshSession = useRefreshSession();
+  const showSubject = user?.preferences?.pushPreview === 'subject';
+  const setShowSubject = async (on: boolean) => {
+    try {
+      await patch('/account', { preferences: { pushPreview: on ? 'subject' : 'sender' } });
+      await refreshSession();
+    } catch (e) {
+      toast.error(errorText(e));
+    }
+  };
 
   useEffect(() => {
     if (pushSupported) {
@@ -198,11 +209,22 @@ function Appearance() {
           )}
 
           {pushActive && (
-            <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-surface-2 p-3">
-              <div className="text-xs text-muted">Device registered for push notifications.</div>
-              <Button size="sm" variant="secondary" onClick={handleTestPush} disabled={busyPush}>
-                Send test notification
-              </Button>
+            <div className="mt-3 space-y-3 rounded-lg bg-surface-2 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs text-muted">Device registered for push notifications.</div>
+                <Button size="sm" variant="secondary" onClick={handleTestPush} disabled={busyPush}>
+                  Send test notification
+                </Button>
+              </div>
+              <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
+                <div>
+                  <div className="text-[13px] font-medium">Show the subject</div>
+                  <div className="text-xs text-muted">
+                    Off: "New mail, from Ann". On: the sender and the subject, also on the lock screen. Applies to all your devices.
+                  </div>
+                </div>
+                <Switch checked={showSubject} onChange={setShowSubject} label="Show the subject" />
+              </div>
             </div>
           )}
         </div>
