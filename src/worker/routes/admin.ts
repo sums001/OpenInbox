@@ -17,6 +17,7 @@ import {
   providerPatchSchema,
   providerSchema,
   r2Schema,
+  r2BucketSchema,
   settingsSchema,
   blockSchema,
   setupTokenSchema,
@@ -76,10 +77,10 @@ import { retryMessage } from '../services/send';
 import { enforceDmarc, fetchLogo, getSenderLogo, removeSenderLogo, setSenderLogo } from '../services/bimi';
 import { noteRecentSenders } from '../services/sender-logos';
 import { deleteBlobs } from '../services/threads';
-import { Cloudflare, cfFromEnv, DEFAULT_CF_API } from '../cloudflare/client';
+import { Cloudflare, cfFromEnv, cfToken, DEFAULT_CF_API } from '../cloudflare/client';
 import { checkPermissions, listZones, verifyToken, zoneAccess } from '../cloudflare/token';
 import { createDestination, deleteDestination, disableRule, listDestinations, listRules } from '../cloudflare/email-routing';
-import { R2S3Store, type R2Config } from '../storage/r2';
+import { R2S3Store, r2KeysFromToken, type R2Config } from '../storage/r2';
 import { detectWorker } from '../cloudflare/workers';
 
 export const admin = new Hono<AppBindings>();
@@ -429,6 +430,15 @@ admin.post('/cloudflare/token', async (c) => {
   const check = await verifyToken(cf);
   if (!check.valid) throw new HttpError(400, 'invalid_token', check.message ?? 'Cloudflare rejected this token.');
   await saveSettings(c.env.DB, { cfTokenEnc: await encrypt(c.env, token) });
+  // Attachment keys derived from the old token follow the new one.
+  const settings = await settingsOf(c);
+  if (settings.r2Enc && settings.cfAccountId) {
+    const r2 = await decryptJsonSafe(c.env, settings.r2Enc).catch(() => null);
+    if (r2?.fromToken) {
+      const keys = await r2KeysFromToken(cf, token, settings.cfAccountId).catch(() => null);
+      if (keys) await saveSettings(c.env.DB, { r2Enc: await encryptJson(c.env, { ...r2, ...keys }) });
+    }
+  }
   await audit(c.env.DB, { userId: currentUser(c).id, action: 'cloudflare.token_replaced', ip: clientIp(c) });
   return c.json({ ok: true });
 });
@@ -453,7 +463,13 @@ async function r2Info(c: { env: AppBindings['Bindings'] }, settings: AppSettings
       config = null;
     }
   }
-  return { mode: settings.storageMode, configured: !!config, bucket: config?.bucket ?? null, accessKeyId: config?.accessKeyId ? `${config.accessKeyId.slice(0, 6)}…` : null };
+  return {
+    mode: settings.storageMode,
+    configured: !!config,
+    bucket: config?.bucket ?? null,
+    accessKeyId: config?.accessKeyId ? `${config.accessKeyId.slice(0, 6)}…` : null,
+    fromToken: !!config?.fromToken,
+  };
 }
 
 async function decryptJsonSafe(env: AppBindings['Bindings'], value: string): Promise<R2Config> {
@@ -481,18 +497,42 @@ admin.get('/storage', async (c) => {
   return c.json({ ...(await r2Info(c, settings)), summary, r2Enabled, bucketPermission, buckets, accountId: settings.cfAccountId });
 });
 
+async function ensureBucket(cf: Cloudflare, accountId: string, name: string): Promise<void> {
+  try {
+    await cf.request('POST', `/accounts/${accountId}/r2/buckets`, { name });
+  } catch (e) {
+    if (!/already exists|10004/i.test(errorMessage(e))) throw new HttpError(400, 'bucket_failed', errorMessage(e));
+  }
+}
+
 admin.post('/storage/bucket', async (c) => {
   const settings = await settingsOf(c);
   const cf = await requireCf(c.env, settings);
   const { bucket } = (await c.req.json()) as { bucket?: string };
   const name = (bucket || 'openinbox-mail').toLowerCase();
   if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(name)) throw badRequest('Bucket names use 3-63 lowercase letters, digits and dashes.');
-  try {
-    await cf.request('POST', `/accounts/${settings.cfAccountId}/r2/buckets`, { name });
-  } catch (e) {
-    if (!/already exists|10004/i.test(errorMessage(e))) throw new HttpError(400, 'bucket_failed', errorMessage(e));
-  }
+  await ensureBucket(cf, settings.cfAccountId!, name);
   return c.json({ bucket: name });
+});
+
+// Turns attachments on with S3 keys derived from OpenInbox's own Cloudflare token, creating the
+// bucket if needed: no keys to create or paste.
+admin.post('/storage/r2/token', async (c) => {
+  const settings = await settingsOf(c);
+  if (!settings.cfAccountId) throw conflict('OpenInbox does not know your Cloudflare account yet.');
+  const cf = await requireCf(c.env, settings);
+  const token = (await cfToken(c.env, settings))!;
+  const { bucket } = await body(c, r2BucketSchema);
+  await ensureBucket(cf, settings.cfAccountId, bucket);
+  const config: R2Config = { accountId: settings.cfAccountId, bucket, ...(await r2KeysFromToken(cf, token, settings.cfAccountId)), fromToken: true };
+  try {
+    await new R2S3Store(config).selfTest();
+  } catch (e) {
+    throw new HttpError(400, 'r2_test_failed', `R2 test failed: ${errorMessage(e)}. The Cloudflare token needs Workers R2 Storage: Edit.`);
+  }
+  await saveSettings(c.env.DB, { r2Enc: await encryptJson(c.env, config), storageMode: 'r2' });
+  await audit(c.env.DB, { userId: currentUser(c).id, action: 'storage.r2_enabled', target: bucket, details: { keys: 'cloudflare token' }, ip: clientIp(c) });
+  return c.json({ ok: true });
 });
 
 admin.post('/storage/r2', async (c) => {
