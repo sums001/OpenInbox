@@ -19,6 +19,7 @@ import { mail } from './routes/mail';
 import { compose } from './routes/compose';
 import { admin } from './routes/admin';
 import { webhooks } from './routes/webhooks';
+import { devices } from './routes/devices';
 import { api } from './routes/api';
 import { apiKeyAuth } from './auth/api-key';
 import { bimi } from './routes/bimi';
@@ -73,6 +74,8 @@ const apiCors: MiddlewareHandler<AppBindings> = async (c, next) => {
 };
 app.use('/v1/*', apiCors);
 app.use('/health', apiCors);
+app.use('/devices/pair', apiCors);
+app.use('/devices/pair/*', apiCors);
 
 app.get('/health', (c) => c.json({ ok: true, version: __APP_VERSION__ }));
 
@@ -113,6 +116,7 @@ app.use('*', async (c, next) => {
 app.route('/setup', setup);
 app.route('/auth', auth);
 app.route('/webhooks', webhooks);
+app.route('/devices', devices);
 app.route('/bimi', bimi);
 
 app.use('/v1/*', apiKeyAuth);

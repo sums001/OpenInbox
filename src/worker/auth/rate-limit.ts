@@ -9,6 +9,8 @@ export interface Limit {
 export const LOGIN_PER_IP: Limit = { max: 20, windowMs: 15 * 60_000 };
 export const LOGIN_PER_ACCOUNT: Limit = { max: 6, windowMs: 15 * 60_000 };
 export const KEY_CHECK_PER_IP: Limit = { max: 6, windowMs: 15 * 60_000 };
+// Wrong pairing codes from one address (a short code is 40 bits and lives 5 minutes).
+export const PAIR_PER_IP: Limit = { max: 10, windowMs: 15 * 60_000 };
 // Per user across all their API keys. Each allowed request costs one D1 write, so this also keeps
 // one busy client inside the free plan's daily write budget.
 export const API_PER_USER: Limit = { max: 60, windowMs: 60_000 };

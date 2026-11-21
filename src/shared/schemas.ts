@@ -197,6 +197,18 @@ export const blockSchema = z.object({ pattern: z.string().trim().min(3).max(254)
 export const destinationSchema = z.object({ email: z.string().trim().email().max(254) });
 export const trustedSenderSchema = z.object({ pattern: z.string().trim().min(3).max(254) });
 
+// Connecting a phone (services/devices.ts).
+export const pairClaimSchema = z
+  .object({
+    code: z.string().trim().min(20).max(100).optional(),
+    shortCode: z.string().trim().min(8).max(12).optional(),
+    name: z.string().trim().min(1).max(60),
+    platform: z.enum(['android', 'ios', 'web', 'other']).default('other'),
+  })
+  .refine((x) => !!x.code !== !!x.shortCode, 'Send either the code from the QR code or the short code.');
+export const pairCollectSchema = z.object({ secret: z.string().trim().min(20).max(100) });
+export const pairDecisionSchema = z.object({ allow: z.boolean() });
+
 export const apiKeySchema = z.object({
   // A key outlives sessions, so creating one asks for the password again.
   password: z.string().min(1, 'Enter your password.').max(256),
