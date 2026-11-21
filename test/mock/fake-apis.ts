@@ -28,7 +28,10 @@ export interface FakeState {
   accounts: { id: string; name: string }[];
   subdomain: string;
   scripts: Record<string, { d1: string; secrets?: Record<string, string> }>;
-  zones: { id: string; name: string; status: string }[];
+  // Workers uploaded through the API (OpenInbox's relay), by "<account id>/<name>".
+  uploads: Record<string, { source: string; metadata: { main_module: string; bindings: { type: string; name: string; text?: string }[] } }>;
+  // account: the id of the account the zone is in; the first account when absent.
+  zones: { id: string; name: string; status: string; account?: string }[];
   dns: Record<string, FakeRecord[]>;
   routing: Record<string, { enabled: boolean; status: string }>;
   catchAll: Record<string, FakeRule>;
@@ -56,6 +59,7 @@ export function createFakeState(): FakeState {
     accounts: [{ id: 'acc_test', name: 'Test Account' }],
     subdomain: 'tester',
     scripts: { openinbox: { d1: 'db_test' } },
+    uploads: {},
     zones: [
       { id: 'zone_example', name: 'example.com', status: 'active' },
       { id: 'zone_gmail', name: 'workspace.dev', status: 'active' },
@@ -104,6 +108,11 @@ function id(state: FakeState, prefix: string): string {
 }
 
 async function readBody(req: Request): Promise<any> {
+  if ((req.headers.get('content-type') ?? '').startsWith('multipart/form-data')) {
+    const out: Record<string, string> = {};
+    for (const [k, v] of await req.formData()) out[k] = typeof v === 'string' ? v : await v.text();
+    return out;
+  }
   const text = await req.text();
   if (!text) return undefined;
   try {
@@ -169,6 +178,23 @@ function cloudflare(state: FakeState, req: Request, url: URL, path: string, body
     (s.secrets ??= {})[body.name] = body.text;
     return ok({ name: body.name, type: body.type });
   }
+  if ((r = /^\/accounts\/([^/]+)\/workers\/scripts\/([^/]+)$/.exec(path)) && (m === 'PUT' || m === 'DELETE')) {
+    const key = `${r[1]}/${r[2]}`;
+    if (m === 'DELETE') {
+      if (!state.uploads[key]) return fail(404, 10007, 'workers.api.error.script_not_found');
+      delete state.uploads[key];
+      return ok(null);
+    }
+    const metadata = JSON.parse(body.metadata);
+    if (!body[metadata.main_module]) return fail(400, 10021, 'No such module: main_module');
+    state.uploads[key] = { source: body[metadata.main_module], metadata };
+    return ok({ id: r[2] });
+  }
+  if ((r = /^\/accounts\/([^/]+)\/workers\/scripts\/([^/]+)\/settings$/.exec(path)) && state.uploads[`${r[1]}/${r[2]}`]) {
+    // Like Cloudflare, secrets are listed without their value.
+    const bindings = state.uploads[`${r[1]}/${r[2]}`].metadata.bindings.map((b) => (b.type === 'secret_text' ? { type: b.type, name: b.name } : b));
+    return ok({ bindings });
+  }
   if ((r = /^\/accounts\/[^/]+\/workers\/scripts\/([^/]+)\/settings$/.exec(path))) {
     const s = state.scripts[r[1]];
     return s ? ok({ bindings: [{ type: 'd1', name: 'DB', id: s.d1 }] }) : fail(404, 10007, 'workers.api.error.script_not_found');
@@ -230,11 +256,12 @@ function cloudflare(state: FakeState, req: Request, url: URL, path: string, body
     return ok({ buckets: state.buckets.map((name) => ({ name })) });
   }
   if (path === '/zones') {
-    return page(state.zones.map((z) => ({ ...z, account: state.accounts[0] })), url);
+    const only = url.searchParams.get('account.id');
+    return page(state.zones.filter((z) => !only || zoneAccount(state, z.id).id === only).map((z) => withAccount(state, z)), url);
   }
   if ((r = /^\/zones\/([^/]+)$/.exec(path))) {
     const z = state.zones.find((x) => x.id === r![1]);
-    return z ? ok({ ...z, account: state.accounts[0] }) : fail(404, 7003, 'Could not route to /zones');
+    return z ? ok(withAccount(state, z)) : fail(404, 7003, 'Could not route to /zones');
   }
   if ((r = /^\/zones\/([^/]+)\/dns_records$/.exec(path))) {
     const recs = (state.dns[r[1]] ??= []);
@@ -279,6 +306,11 @@ function cloudflare(state: FakeState, req: Request, url: URL, path: string, body
   }
   if ((r = /^\/zones\/([^/]+)\/email\/routing\/rules\/catch_all$/.exec(path))) {
     if (m === 'PUT') {
+      // Email Routing hands mail only to a Worker in the zone's own account.
+      const account = zoneAccount(state, r[1]).id;
+      const exists = (w: string) => state.uploads[`${account}/${w}`] || (account === state.accounts[0].id && state.scripts[w]);
+      const missing = (body.actions ?? []).filter((a: { type: string }) => a.type === 'worker').flatMap((a: { value?: string[] }) => a.value ?? []).find((w: string) => !exists(w));
+      if (missing) return fail(400, 2020, `Worker ${missing} does not exist in this account`);
       state.catchAll[r[1]] = { id: 'catch_all', ...body };
       return ok(state.catchAll[r[1]]);
     }
@@ -294,6 +326,16 @@ function cloudflare(state: FakeState, req: Request, url: URL, path: string, body
   if (/^\/zones\/[^/]+\/workers\/routes$/.test(path)) return ok([]);
   if (path === '/graphql') return graphql(body);
   return fail(404, 7000, `No route for ${m} ${path}`);
+}
+
+function zoneAccount(state: FakeState, zoneId: string): { id: string; name: string } {
+  const z = state.zones.find((x) => x.id === zoneId);
+  return state.accounts.find((a) => a.id === z?.account) ?? state.accounts[0];
+}
+
+function withAccount(state: FakeState, z: FakeState['zones'][number]) {
+  const { account: _a, ...rest } = z;
+  return { ...rest, account: zoneAccount(state, z.id) };
 }
 
 function zoneName(state: FakeState, zoneId: string): string {
