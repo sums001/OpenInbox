@@ -192,7 +192,9 @@ export async function updateUser(
         email,
         id,
       ),
-      ...(patch.status === 'disabled' ? [env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id)] : []),
+      ...(patch.status === 'disabled'
+        ? [env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id), env.DB.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').bind(id)]
+        : []),
       auditStmt(env.DB, { userId: actor.id, action: 'user.updated', target: u.email, details: patch, ip }),
     ]);
   } catch (e) {

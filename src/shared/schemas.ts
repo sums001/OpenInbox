@@ -196,3 +196,34 @@ export const noteSchema = z.object({ body: z.string().trim().min(1).max(5000) })
 export const blockSchema = z.object({ pattern: z.string().trim().min(3).max(254), mailboxId: id.nullable().optional() });
 export const destinationSchema = z.object({ email: z.string().trim().email().max(254) });
 export const trustedSenderSchema = z.object({ pattern: z.string().trim().min(3).max(254) });
+
+// The push services browsers subscribe with. The Worker POSTs to a subscription's endpoint, so
+// it only accepts these hosts: anything else would let a user make the Worker call any URL.
+const PUSH_HOSTS = ['fcm.googleapis.com', 'web.push.apple.com'];
+const PUSH_HOST_SUFFIXES = ['.push.services.mozilla.com', '.notify.windows.com'];
+
+export function isPushEndpoint(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'https:' || url.port || url.username || url.password) return false;
+  const host = url.hostname.toLowerCase();
+  return PUSH_HOSTS.includes(host) || PUSH_HOST_SUFFIXES.some((s) => host.endsWith(s));
+}
+
+const pushEndpoint = z.string().trim().max(1000).refine(isPushEndpoint, 'Not a push service this server can send to.');
+
+export const pushSubscriptionSchema = z.object({
+  endpoint: pushEndpoint,
+  // base64url, unpadded: an uncompressed P-256 point (65 bytes, 0x04 first) and a 16-byte secret.
+  p256dh: z.string().trim().transform((s) => s.replace(/=+$/, '')).pipe(z.string().regex(/^B[\w-]{86}$/, 'Not a P-256 public key.')),
+  auth: z.string().trim().transform((s) => s.replace(/=+$/, '')).pipe(z.string().regex(/^[\w-]{22}$/, 'Not a 16-byte secret.')),
+});
+
+export const pushUnsubscribeSchema = z.object({
+  endpoint: z.string().trim().max(1000),
+});
+

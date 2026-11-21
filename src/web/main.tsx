@@ -10,6 +10,12 @@ import './index.css';
 
 initTheme();
 
+// The push service worker is registered when someone turns push on (lib/push.ts). When a
+// notification is clicked while a tab it doesn't control is open, it asks that tab to go there.
+navigator.serviceWorker?.addEventListener('message', (e: MessageEvent<{ type?: string; url?: string }>) => {
+  if (e.data?.type === 'open' && e.data.url?.startsWith('/')) location.assign(e.data.url);
+});
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
