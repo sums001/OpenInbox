@@ -113,11 +113,13 @@ export const providerPatchSchema = z.object({
   priority: z.number().int().min(0).max(1000).optional(),
 });
 
+const bucketName = z.string().trim().min(3).max(63).regex(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/, 'Bucket names use lowercase letters, digits and dashes.');
 export const r2Schema = z.object({
-  bucket: z.string().trim().min(3).max(63).regex(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/, 'Bucket names use lowercase letters, digits and dashes.'),
+  bucket: bucketName,
   accessKeyId: z.string().trim().min(10).max(200),
   secretAccessKey: z.string().trim().min(10).max(200),
 });
+export const r2BucketSchema = z.object({ bucket: bucketName });
 
 export const settingsSchema = z.object({
   instanceName: z.string().trim().min(1).max(60).optional(),

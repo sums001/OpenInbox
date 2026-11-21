@@ -2,14 +2,33 @@
 // 25 MB message isn't hashed on the free plan's CPU budget.
 import { AwsClient } from 'aws4fetch';
 import type { BlobStore } from './index';
+import type { Cloudflare } from '../cloudflare/client';
+import { sha256Hex } from '../lib/crypto';
 
 export interface R2Config {
   accountId: string;
   bucket: string;
   accessKeyId: string;
   secretAccessKey: string;
+  // The keys are derived from OpenInbox's Cloudflare API token (r2KeysFromToken), and follow it
+  // when the token is replaced.
+  fromToken?: boolean;
   // Only for tests and S3-compatible mocks.
   endpoint?: string;
+}
+
+// R2's S3 API accepts a Cloudflare API token that has R2 permission: the token's id is the access
+// key id and the SHA-256 of its value the secret access key. OpenInbox's own token has Workers R2
+// Storage: Edit, so the person needn't create separate S3 keys.
+export async function r2KeysFromToken(cf: Cloudflare, token: string, accountId: string): Promise<{ accessKeyId: string; secretAccessKey: string }> {
+  let id: string | undefined;
+  try {
+    id = (await cf.get<{ id: string }>('/user/tokens/verify')).id;
+  } catch {
+    // an account token verifies under its account
+  }
+  id ??= (await cf.get<{ id: string }>(`/accounts/${accountId}/tokens/verify`)).id;
+  return { accessKeyId: id, secretAccessKey: await sha256Hex(token) };
 }
 
 export class R2S3Store implements BlobStore {

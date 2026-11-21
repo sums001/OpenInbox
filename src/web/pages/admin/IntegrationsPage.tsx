@@ -632,6 +632,9 @@ interface StorageInfo {
   accessKeyId: string | null;
   r2Enabled: boolean | null;
   bucketPermission: boolean;
+  buckets?: string[];
+  // The S3 keys come from OpenInbox's own Cloudflare token.
+  fromToken?: boolean;
   accountId: string | null;
   summary: { d1Bytes: number | null; messages: number };
 }
@@ -639,8 +642,7 @@ interface StorageInfo {
 function StorageSection() {
   const storage = useQuery({ queryKey: ['admin', 'storage'], queryFn: () => get<StorageInfo>('/admin/storage') });
   const [bucket, setBucket] = useState('openinbox-mail');
-  const [keyId, setKeyId] = useState('');
-  const [secret, setSecret] = useState('');
+  const [manual, setManual] = useState(false);
   const { run, busy } = useAction();
   const invalidate = useInvalidate();
   const s = storage.data;
@@ -705,11 +707,13 @@ function StorageSection() {
                 </a>
                 {s?.r2Enabled === false && <div className="mt-1 text-warning">R2 is not enabled on this account yet.</div>}
               </SetupStep>
-              <SetupStep n={2} title="Create a bucket" done={s?.configured}>
+              <SetupStep n={2} title="Create a bucket" done={s?.configured || s?.buckets?.includes(bucket)}>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Input value={bucket} onChange={(e) => setBucket(e.target.value.toLowerCase())} className="max-w-60 font-mono text-xs" aria-label="Bucket name" />
-                  {s?.bucketPermission ? (
-                    <Button size="sm" className="h-9" loading={busy === 'bucket'} onClick={() => run('bucket', () => post('/admin/storage/bucket', { bucket }), `Bucket ${bucket} is ready`)}>
+                  {s?.buckets?.includes(bucket) ? (
+                    <span className="self-center text-xs text-muted">This bucket exists.</span>
+                  ) : s?.bucketPermission ? (
+                    <Button size="sm" className="h-9" loading={busy === 'bucket'} onClick={() => run('bucket', () => post('/admin/storage/bucket', { bucket }).then(refresh), `Bucket ${bucket} is ready`)}>
                       Create it for me
                     </Button>
                   ) : (
@@ -717,34 +721,33 @@ function StorageSection() {
                   )}
                 </div>
               </SetupStep>
-              <SetupStep n={3} title="Create an R2 API token and paste its S3 keys" done={s?.configured}>
-                Permission: <b className="font-medium text-fg">Object Read &amp; Write</b>, scoped to that bucket.{' '}
-                <a href={`${dash}/api-tokens`} target="_blank" rel="noreferrer" className={link}>
-                  Open R2 API tokens <ExternalLink className="h-3 w-3" />
-                </a>
-                <form
-                  className="mt-3 grid gap-2.5"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    run(
-                      'connect',
-                      () =>
-                        post('/admin/storage/r2', { bucket, accessKeyId: keyId, secretAccessKey: secret }).then(() => {
-                          setSecret('');
-                          refresh();
-                        }),
-                      'Attachments are on',
-                    );
-                  }}
-                >
-                  <Input value={keyId} onChange={(e) => setKeyId(e.target.value)} placeholder="Access Key ID" className="font-mono text-xs" required />
-                  <Input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="Secret Access Key" required />
-                  <div>
-                    <Button type="submit" variant="primary" loading={busy === 'connect'}>
-                      Check and turn on
-                    </Button>
+              <SetupStep n={3} title={s?.bucketPermission ? 'Turn it on' : 'Create an R2 API token and paste its S3 keys'} done={s?.configured}>
+                {s?.bucketPermission && (
+                  <div className="mb-3">
+                    {s.configured && s.fromToken
+                      ? 'On, with the S3 keys of OpenInbox’s Cloudflare token.'
+                      : 'OpenInbox can use the S3 keys of its own Cloudflare token, which already has R2 access: nothing to create or paste.'}
+                    {!(s.configured && s.fromToken) && (
+                      <div className="mt-2 flex flex-wrap items-center gap-3">
+                        <Button variant="primary" loading={busy === 'token-keys'} onClick={() => run('token-keys', () => post('/admin/storage/r2/token', { bucket }).then(refresh), 'Attachments are on')}>
+                          Turn on with the Cloudflare token
+                        </Button>
+                        <button type="button" className="text-xs text-muted hover:text-fg" onClick={() => setManual((m) => !m)}>
+                          {manual ? 'Hide' : 'Or use a key scoped to this bucket'}
+                        </button>
+                      </div>
+                    )}
                   </div>
-                </form>
+                )}
+                {(!s?.bucketPermission || manual) && !(s?.configured && s?.fromToken) && (
+                  <>
+                    Permission: <b className="font-medium text-fg">Object Read &amp; Write</b>, scoped to that bucket.{' '}
+                    <a href={`${dash}/api-tokens`} target="_blank" rel="noreferrer" className={link}>
+                      Open R2 API tokens <ExternalLink className="h-3 w-3" />
+                    </a>
+                    <ManualKeys bucket={bucket} onDone={refresh} />
+                  </>
+                )}
               </SetupStep>
             </ol>
             <p className="text-xs text-faint text-pretty">The keys are stored encrypted in D1 and used through R2's S3 API, so redeploys never undo this. Mail that arrived in text-only mode stays text-only.</p>
@@ -752,6 +755,38 @@ function StorageSection() {
         )}
       </Card>
     </section>
+  );
+}
+
+// S3 keys of an R2 API token the person created, scoped to the bucket.
+function ManualKeys({ bucket, onDone }: { bucket: string; onDone: () => void }) {
+  const [keyId, setKeyId] = useState('');
+  const [secret, setSecret] = useState('');
+  const { run, busy } = useAction();
+  return (
+    <form
+      className="mt-3 grid gap-2.5"
+      onSubmit={(e) => {
+        e.preventDefault();
+        run(
+          'connect',
+          () =>
+            post('/admin/storage/r2', { bucket, accessKeyId: keyId, secretAccessKey: secret }).then(() => {
+              setSecret('');
+              onDone();
+            }),
+          'Attachments are on',
+        );
+      }}
+    >
+      <Input value={keyId} onChange={(e) => setKeyId(e.target.value)} placeholder="Access Key ID" className="font-mono text-xs" required />
+      <Input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="Secret Access Key" required />
+      <div>
+        <Button type="submit" variant="primary" loading={busy === 'connect'}>
+          Check and turn on
+        </Button>
+      </div>
+    </form>
   );
 }
 

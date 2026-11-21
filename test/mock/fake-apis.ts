@@ -37,6 +37,10 @@ export interface FakeState {
   customDomains: { id: string; hostname: string; service: string; zone_id: string }[];
   r2Enabled: boolean;
   buckets: string[];
+  // R2's S3 API: the access key ids it accepts (the fake token's id), and the objects by
+  // "<bucket>/<key>".
+  s3Keys: string[];
+  s3Objects: Record<string, string>;
   resend: { domains: { id: string; name: string; status: string; records: Record<string, unknown>[] }[]; emails: Record<string, unknown>[]; failNext: number; webhooks: string[] };
   brevo: { domains: Record<string, { id: number; authenticated: boolean }>; emails: Record<string, unknown>[]; credits: number };
   mailjet: { dns: Record<string, { id: number }>; emails: Record<string, unknown>[] };
@@ -74,6 +78,8 @@ export function createFakeState(): FakeState {
     customDomains: [],
     r2Enabled: false,
     buckets: [],
+    s3Keys: ['tok'],
+    s3Objects: {},
     resend: { domains: [], emails: [], failNext: 0, webhooks: [] },
     brevo: { domains: {}, emails: [], credits: 300 },
     mailjet: { dns: {}, emails: [] },
@@ -128,6 +134,8 @@ export async function handleFake(state: FakeState, req: Request): Promise<Respon
     state.requests.push({ method: req.method, url: `logos${path}` });
     return path in state.logos ? new Response(state.logos[path], { headers: { 'Content-Type': 'image/svg+xml' } }) : new Response('Not found', { status: 404 });
   }
+  const r2 = /^([a-z0-9_]+)\.r2\.cloudflarestorage\.com$/.exec(url.hostname);
+  if (r2) return s3(state, req, r2[1], path);
   const hostMap: Record<string, string> = { 'cf.test': 'cf', 'resend.test': 'resend', 'brevo.test': 'brevo', 'mailjet.test': 'mailjet', 'github.test': 'github' };
   if (hostMap[url.hostname]) {
     service = hostMap[url.hostname];
@@ -146,6 +154,25 @@ export async function handleFake(state: FakeState, req: Request): Promise<Respon
   if (service === 'mailjet') return mailjet(state, req, path, body);
   if (service === 'github') return state.release && /\/releases\/latest$/.test(path) ? json(state.release) : json({ message: 'Not Found' }, 404);
   return null;
+}
+
+// R2's S3 API, checking only the access key id of the signature.
+async function s3(state: FakeState, req: Request, account: string, path: string): Promise<Response> {
+  const akid = /Credential=([^/]+)\//.exec(req.headers.get('authorization') ?? '')?.[1] ?? '';
+  state.requests.push({ method: req.method, url: `r2/${account}${path}`, body: { akid } });
+  if (!state.s3Keys.includes(akid)) return new Response('<Error><Code>InvalidAccessKeyId</Code></Error>', { status: 403 });
+  const [, bucket, ...rest] = path.split('/');
+  if (!state.buckets.includes(bucket)) return new Response('<Error><Code>NoSuchBucket</Code></Error>', { status: 404 });
+  const id = `${bucket}/${decodeURIComponent(rest.join('/'))}`;
+  if (req.method === 'PUT') {
+    state.s3Objects[id] = await req.text();
+    return new Response('', { status: 200 });
+  }
+  if (req.method === 'DELETE') {
+    delete state.s3Objects[id];
+    return new Response(null, { status: 204 });
+  }
+  return id in state.s3Objects ? new Response(state.s3Objects[id]) : new Response('<Error><Code>NoSuchKey</Code></Error>', { status: 404 });
 }
 
 function cloudflare(state: FakeState, req: Request, url: URL, path: string, body: any): Response {
@@ -224,6 +251,7 @@ function cloudflare(state: FakeState, req: Request, url: URL, path: string, body
   if (/^\/accounts\/[^/]+\/r2\/buckets$/.test(path)) {
     if (!state.r2Enabled) return fail(403, 10042, 'Please enable R2 through the Cloudflare Dashboard.');
     if (m === 'POST') {
+      if (state.buckets.includes(body.name)) return fail(409, 10004, 'The bucket you tried to create already exists, and you own it.');
       state.buckets.push(body.name);
       return ok({ name: body.name });
     }
