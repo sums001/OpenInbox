@@ -12,8 +12,13 @@ import {
   type ProviderAdapter,
   type RecordStatus,
   type SendResult,
+  type SentEmail,
   type WebhookSetup,
 } from './types';
+
+// email.sent also reports mail other apps send through the account (issue #17). Changing this
+// list needs a new WEBHOOK_VERSION (services/providers.ts), so existing webhooks are registered again.
+export const RESEND_WEBHOOK_EVENTS = ['email.sent', 'email.delivered', 'email.bounced', 'email.complained', 'email.delivery_delayed', 'email.failed'];
 
 export interface ResendConfig {
   apiKey: string;
@@ -140,10 +145,7 @@ export class ResendAdapter implements ProviderAdapter {
 
   async setupWebhook(url: string): Promise<WebhookSetup | null> {
     try {
-      const r = await this.call<{ id: string; signing_secret?: string; secret?: string }>('POST', '/webhooks', {
-        endpoint: url,
-        events: ['email.delivered', 'email.bounced', 'email.complained', 'email.delivery_delayed', 'email.failed'],
-      });
+      const r = await this.call<{ id: string; signing_secret?: string; secret?: string }>('POST', '/webhooks', { endpoint: url, events: RESEND_WEBHOOK_EVENTS });
       return { id: r.id, secret: r.signing_secret ?? r.secret };
     } catch {
       return null;
@@ -152,5 +154,30 @@ export class ResendAdapter implements ProviderAdapter {
 
   async removeWebhook(id: string): Promise<void> {
     await this.call('DELETE', `/webhooks/${encodeURIComponent(id)}`);
+  }
+
+  // Needs a full-access key: a sending-only key gets 401 (restricted_api_key).
+  async getSentEmail(id: string): Promise<SentEmail> {
+    const e = await this.call<{
+      to?: (string | null)[];
+      cc?: (string | null)[] | null;
+      bcc?: (string | null)[] | null;
+      reply_to?: (string | null)[] | null;
+      subject?: string;
+      text?: string | null;
+      html?: string | null;
+      last_event?: string | null;
+    }>('GET', `/emails/${encodeURIComponent(id)}`);
+    const list = (l?: (string | null)[] | null) => (l ?? []).filter((x): x is string => !!x);
+    return {
+      to: list(e.to),
+      cc: list(e.cc),
+      bcc: list(e.bcc),
+      replyTo: list(e.reply_to),
+      subject: e.subject ?? '',
+      text: e.text ?? null,
+      html: e.html ?? null,
+      lastEvent: e.last_event ?? null,
+    };
   }
 }
