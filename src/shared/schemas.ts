@@ -195,4 +195,5 @@ export const filterSchema = z.object({
 export const noteSchema = z.object({ body: z.string().trim().min(1).max(5000) });
 export const blockSchema = z.object({ pattern: z.string().trim().min(3).max(254), mailboxId: id.nullable().optional() });
 export const destinationSchema = z.object({ email: z.string().trim().email().max(254) });
+export const forwardRuleSchema = z.object({ domainId: id, ruleId: z.string().trim().min(1).max(64), enabled: z.boolean().optional() });
 export const trustedSenderSchema = z.object({ pattern: z.string().trim().min(3).max(254) });

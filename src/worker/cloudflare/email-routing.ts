@@ -98,8 +98,12 @@ export function conflictingRules(rules: RoutingRule[], worker: string): { id?: s
 }
 
 export async function disableRule(cf: Cloudflare, zoneId: string, rule: RoutingRule): Promise<void> {
+  await setRuleEnabled(cf, zoneId, rule, false);
+}
+
+export async function setRuleEnabled(cf: Cloudflare, zoneId: string, rule: RoutingRule, enabled: boolean): Promise<void> {
   const id = rule.id ?? rule.tag;
-  await cf.request('PUT', `/zones/${zoneId}/email/routing/rules/${id}`, { ...rule, enabled: false });
+  await cf.request('PUT', `/zones/${zoneId}/email/routing/rules/${id}`, { ...rule, enabled });
 }
 
 export interface DestinationAddress {
