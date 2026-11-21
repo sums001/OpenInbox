@@ -25,7 +25,7 @@ import { counterStmt, dailyStatStmt, inboundLogStmt, logInbound } from './stats'
 import { bumpState, type AutoReply } from './mailboxes';
 import { maybeAutoReply } from './autoreply';
 import { noteSenderStmt, senderDomain } from './sender-logos';
-import { notifyMailboxMembers } from './webpush';
+import { notifyMailboxMembers, wantsSubject } from './webpush';
 
 export interface Recipient {
   mailboxId: number;
@@ -460,16 +460,14 @@ async function sideEffects(c: Context, o: IngestOptions, mailboxId: number, thre
   // Web Push notification to user devices (phone / desktop)
   const isInbox = (actions.folder ?? o.folderOverride ?? 'inbox') === 'inbox' && !actions.markRead && !o.markRead;
   if (isInbox) {
-    // No subject or body text: notifications show on lock screens, and the payload passes
-    // through the browser vendor's push service (encrypted, but still).
+    // By default no subject or body text: notifications show on lock screens, and the payload
+    // passes through the browser vendor's push service (encrypted, but still). People who turn on
+    // "Show the subject" get the sender as the title and the subject as the text.
     const sender = p.from.name || p.from.address;
-    const push = notifyMailboxMembers(env, mailboxId, {
-      title: 'New mail',
-      body: sender ? `From ${sender}` : 'You have a new message.',
-      url: `/mail/all/inbox/${threadId}`,
-      threadId,
-      tag: `thread-${threadId}`,
-    }).catch((e) => logError('inbound.push_failed', e));
+    const common = { url: `/mail/all/inbox/${threadId}`, threadId, tag: `thread-${threadId}` };
+    const plain = { ...common, title: 'New mail', body: sender ? `From ${sender}` : 'You have a new message.' };
+    const detailed = { ...common, title: sender || 'New mail', body: p.subject?.trim() || '(no subject)' };
+    const push = notifyMailboxMembers(env, mailboxId, (sub) => (wantsSubject(sub) ? detailed : plain)).catch((e) => logError('inbound.push_failed', e));
     if (o.ctx) o.ctx.waitUntil(push);
   }
 }

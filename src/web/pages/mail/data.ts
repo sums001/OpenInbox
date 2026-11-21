@@ -173,7 +173,7 @@ export function useMailSync(mailboxes: Mailbox[] | undefined) {
           qc.invalidateQueries({ queryKey: ['thread'] });
           const boxes = qc.getQueryData<Mailbox[]>(['mailboxes']) ?? [];
           const after = boxes.reduce((n, m) => n + (m.unread.inbox ?? 0), 0);
-          if (after > before && document.hidden && storageGet('oi.notify', false) && 'Notification' in window && Notification.permission === 'granted') {
+          if (after > before && document.hidden && storageGet('oi.notify', false) && !storageGet('oi.push', false) && 'Notification' in window && Notification.permission === 'granted') {
             const n = new Notification('New mail', { body: `${after - before} new conversation${after - before === 1 ? '' : 's'} in your inbox`, tag: 'openinbox-new-mail', icon: '/icon-192.png' });
             n.onclick = () => window.focus();
           }

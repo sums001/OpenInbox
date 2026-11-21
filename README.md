@@ -75,6 +75,7 @@ OpenInbox is built for everyday conversations. It is not a bulk or marketing sen
 - Send through Resend, Brevo, Mailjet, Cloudflare Email Sending or any SMTP server. When one provider hits its free limit, mail falls back to another.
 - Threads, All Mail, search (`from:` `has:attachment` `before:`), labels, filters, snooze, scheduled and undo send.
 - Command palette and keyboard shortcuts, dark mode, mobile layout.
+- Push notifications for new mail on phones and desktops, even with OpenInbox closed: **Settings → Theme and notifications**.
 
 **Teams**
 - Unlimited users, with personal and shared inboxes.
@@ -234,6 +235,7 @@ If your copy was created before automatic updates were removed, its workflow sti
 | --- | --- |
 | Mail not arriving or not sending | Start with **Admin → Domains → Check health** and **Admin → Mail flow** |
 | No logo next to my mail | Mail apps show a [BIMI](https://bimigroup.org/) logo only when the domain's DMARC policy is `p=quarantine` or `p=reject`; **Admin → Domains → Sender logo** shows what is missing. Gmail and Apple Mail also need a mark certificate (VMC or CMC). Without one, Gmail may show the photo of a Google Account created for that address |
+| No push notifications on iPhone or iPad | Safari sends them only to an installed web app (iOS 16.4 or later): tap **Share → Add to Home Screen**, open OpenInbox from the Home Screen, then turn on notifications in **Settings → Theme and notifications**. On Android and desktop browsers they work from the browser itself; check that the site may show notifications |
 | Locked out of the owner account | On the sign-in page, choose **Owner locked out?** and enter the owner email and your recovery key |
 | "A repository with that name already exists" on the Deploy form | An earlier deploy already made that repo. Change **Project name**, or [update](#updating) the existing instance instead |
 

@@ -10,13 +10,11 @@ import './index.css';
 
 initTheme();
 
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch((err) => {
-      console.debug('Service Worker registration skipped or failed:', err);
-    });
-  });
-}
+// The push service worker is registered when someone turns push on (lib/push.ts). When a
+// notification is clicked while a tab it doesn't control is open, it asks that tab to go there.
+navigator.serviceWorker?.addEventListener('message', (e: MessageEvent<{ type?: string; url?: string }>) => {
+  if (e.data?.type === 'open' && e.data.url?.startsWith('/')) location.assign(e.data.url);
+});
 
 const queryClient = new QueryClient({
   defaultOptions: {

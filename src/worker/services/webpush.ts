@@ -16,6 +16,8 @@ export interface PushSubscriptionRow {
   user_agent?: string | null;
   created_at: number;
   last_used_at: number;
+  // The owner's users.preferences JSON, when the query selected it.
+  preferences?: string | null;
 }
 
 export interface PushPayload {
@@ -26,6 +28,22 @@ export interface PushPayload {
   tag?: string;
   icon?: string;
 }
+
+// Who sees what: most people get "New mail, from X", which is safe on a lock screen. Someone who
+// turns on "Show the subject" in Settings gets the subject too (pushPreview: 'subject').
+export type PushContent = PushPayload | ((sub: PushSubscriptionRow) => PushPayload);
+
+export function wantsSubject(sub: PushSubscriptionRow): boolean {
+  try {
+    return (JSON.parse(sub.preferences ?? '{}') as { pushPreview?: unknown }).pushPreview === 'subject';
+  } catch {
+    return false;
+  }
+}
+
+// A Topic lets the push service replace a notice for the same conversation that hasn't been
+// delivered yet (a phone that is offline gets one notice, not five). At most 32 URL-safe characters.
+export const pushTopic = (tag: string | undefined) => (tag ? tag.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32) || undefined : undefined);
 
 interface VapidKeys {
   publicKey: string;
@@ -105,7 +123,8 @@ async function getVapidSubject(env: Env): Promise<string> {
     return `mailto:postmaster@${domain.name}`;
   }
 
-  return 'https://openinbox.app';
+  // A subject the instance controls, never someone else's domain.
+  return settings.appUrl?.startsWith('https://') ? settings.appUrl : 'mailto:postmaster@localhost';
 }
 
 async function createVapidAuthHeader(endpoint: string, privateKey: CryptoKey, publicKey: string, subject: string): Promise<string> {
@@ -218,7 +237,9 @@ async function deliver(sender: Sender, sub: PushSubscriptionRow, payload: PushPa
         'Content-Type': 'application/octet-stream',
         'Content-Encoding': 'aes128gcm',
         'TTL': '86400',
-        'Urgency': 'high',
+        // Mail can wait for the phone's next wake-up; 'high' costs battery on Android.
+        'Urgency': 'normal',
+        ...(pushTopic(payload.tag) ? { Topic: pushTopic(payload.tag)! } : {}),
         'Authorization': await createVapidAuthHeader(sub.endpoint, sender.privateKey, sender.publicKey, sender.subject),
       },
       body: await encryptPayload(sub.p256dh, sub.auth, payload),
@@ -241,7 +262,7 @@ async function deliver(sender: Sender, sub: PushSubscriptionRow, payload: PushPa
 }
 
 // Sends one payload to many subscriptions, then records the outcomes in a single D1 batch.
-async function sendAll(env: Env, subs: PushSubscriptionRow[], payload: PushPayload): Promise<number> {
+async function sendAll(env: Env, subs: PushSubscriptionRow[], content: PushContent): Promise<number> {
   if (!subs.length) return 0;
   let sender: Sender;
   try {
@@ -250,7 +271,7 @@ async function sendAll(env: Env, subs: PushSubscriptionRow[], payload: PushPaylo
     logError('webpush.keys_failed', e);
     return 0;
   }
-  const outcomes = await Promise.all(subs.map((sub) => deliver(sender, sub, payload)));
+  const outcomes = await Promise.all(subs.map((sub) => deliver(sender, sub, typeof content === 'function' ? content(sub) : content)));
   const now = Date.now();
   const stmts = subs.flatMap((sub, i) =>
     outcomes[i] === 'gone'
@@ -273,10 +294,10 @@ function capped(subs: PushSubscriptionRow[], fields: Record<string, unknown>): P
   return subs.slice(0, MAX_PUSHES_PER_MESSAGE);
 }
 
-export async function notifyMailboxMembers(env: Env, mailboxId: number, payload: PushPayload): Promise<void> {
+export async function notifyMailboxMembers(env: Env, mailboxId: number, payload: PushContent): Promise<void> {
   const subscriptions = await all<PushSubscriptionRow>(
     env.DB,
-    `SELECT s.id, s.user_id, s.endpoint, s.p256dh, s.auth, s.created_at, s.last_used_at
+    `SELECT s.id, s.user_id, s.endpoint, s.p256dh, s.auth, s.created_at, s.last_used_at, u.preferences
      FROM push_subscriptions s
      JOIN mailbox_members m ON m.user_id = s.user_id
      JOIN users u ON u.id = s.user_id AND u.status = 'active'
