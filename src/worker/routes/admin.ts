@@ -77,6 +77,7 @@ import { enforceDmarc, fetchLogo, getSenderLogo, removeSenderLogo, setSenderLogo
 import { noteRecentSenders } from '../services/sender-logos';
 import { deleteBlobs } from '../services/threads';
 import { Cloudflare, cfFromEnv, DEFAULT_CF_API } from '../cloudflare/client';
+import { updateRelays } from '../services/relay';
 import { checkPermissions, listZones, verifyToken, zoneAccess } from '../cloudflare/token';
 import { createDestination, deleteDestination, disableRule, listDestinations, listRules } from '../cloudflare/email-routing';
 import { R2S3Store, type R2Config } from '../storage/r2';
@@ -186,7 +187,7 @@ admin.put('/mailboxes/:id/members', async (c) => {
 // Domains ------------------------------------------------------------------------------------------
 
 admin.get('/domains', async (c) => {
-  const rows = await all<{ id: number; name: string; zone_id: string; status: string; catch_all_mailbox_id: number | null; provider_id: number | null; setup_state: string; health: string; health_checked_at: number | null; app_hostname: string | null; created_at: number }>(
+  const rows = await all<{ id: number; name: string; zone_id: string; status: string; catch_all_mailbox_id: number | null; provider_id: number | null; setup_state: string; health: string; health_checked_at: number | null; app_hostname: string | null; account_id: string | null; created_at: number }>(
     c.env.DB,
     'SELECT * FROM domains ORDER BY name',
   );
@@ -201,6 +202,7 @@ admin.get('/domains', async (c) => {
       catchAllMailboxId: d.catch_all_mailbox_id,
       providerId: d.provider_id,
       appHostname: d.app_hostname,
+      relayed: !!d.account_id,
       logoUpdatedAt: logos.get(d.id) ?? null,
       addresses: counts.find((x) => x.domain_id === d.id)?.n ?? 0,
       health: d.health_checked_at ? parseJson(d.health, null) : null,
@@ -211,18 +213,30 @@ admin.get('/domains', async (c) => {
   );
 });
 
+// Every zone the token can see, in any account: one in another account than the Worker's gets its
+// mail through a relay Worker there (services/relay.ts).
 admin.get('/zones', async (c) => {
   const settings = await settingsOf(c);
   const cf = await requireCf(c.env, settings);
-  const zones = await listZones(cf, settings.cfAccountId);
+  const zones = await listZones(cf);
   const taken = new Set((await all<{ name: string }>(c.env.DB, 'SELECT name FROM domains')).map((d) => d.name));
   const access = await zoneAccess(cf, zones.filter((z) => !taken.has(z.name)).map((z) => z.id));
-  return c.json(zones.map((z) => ({ id: z.id, name: z.name, status: z.status, connected: taken.has(z.name), usable: access.get(z.id) ?? null })));
+  const relayed = (z: (typeof zones)[number]) => !!(settings.cfAccountId && z.account?.id && z.account.id !== settings.cfAccountId);
+  return c.json(
+    zones.map((z) => ({
+      id: z.id,
+      name: z.name,
+      status: z.status,
+      connected: taken.has(z.name),
+      usable: access.get(z.id) ?? null,
+      account: relayed(z) ? z.account.name : null,
+    })),
+  );
 });
 
 admin.get('/zones/:zoneId', async (c) => {
   const settings = await settingsOf(c);
-  return c.json(await inspectZone(await requireCf(c.env, settings), c.req.param('zoneId'), settings.cfWorkerName));
+  return c.json(await inspectZone(await requireCf(c.env, settings), c.req.param('zoneId'), settings));
 });
 
 admin.post('/domains', async (c) => {
@@ -231,11 +245,11 @@ admin.post('/domains', async (c) => {
   requireWorker(settings);
   const input = await body(c, addDomainSchema);
   const zone = await cf.get<{ id: string; name: string }>(`/zones/${input.zoneId}`);
-  const inspection = await inspectZone(cf, input.zoneId, settings.cfWorkerName);
+  const inspection = await inspectZone(cf, input.zoneId, settings);
   if (inspection.mxState === 'other' && !input.replaceMx) {
     throw new HttpError(409, 'mx_conflict', `${zone.name} already receives mail elsewhere. Confirm that OpenInbox should take over its mail.`, { mx: inspection.mx });
   }
-  const d = await createDomain(c.env.DB, zone, input.replaceMx);
+  const d = await createDomain(c.env.DB, zone, input.replaceMx, inspection.relayed ? inspection.account!.id : null);
   await audit(c.env.DB, { userId: currentUser(c).id, action: 'domain.added', target: zone.name, ip: clientIp(c) });
   return c.json({ id: d.id });
 });
@@ -244,7 +258,7 @@ admin.post('/domains/:id/setup', async (c) => {
   const settings = await settingsOf(c);
   const step = (c.req.query('step') as StepId | undefined) || undefined;
   if (c.req.query('reset') === '1') await resetDomainSteps(c.env.DB, intParam(c, 'id'), c.req.query('replaceMx') === '1' ? true : undefined);
-  const r = await runDomainStep(c.env, settings, intParam(c, 'id'), step);
+  const r = await runDomainStep(c.env, settings, intParam(c, 'id'), step, { appBase: appBase(c, settings) });
   return c.json({ status: r.domain.status, steps: r.steps, done: r.done });
 });
 
@@ -257,8 +271,9 @@ admin.post('/domains/:id/repair', async (c) => {
   const settings = await settingsOf(c);
   const id = intParam(c, 'id');
   await resetDomainSteps(c.env.DB, id);
-  let r = await runDomainStep(c.env, settings, id);
-  for (let i = 0; i < 4 && !r.done && !r.steps.some((s) => s.status === 'error'); i++) r = await runDomainStep(c.env, settings, id);
+  const opts = { appBase: appBase(c, settings) };
+  let r = await runDomainStep(c.env, settings, id, undefined, opts);
+  for (let i = 0; i < 5 && !r.done && !r.steps.some((s) => s.status === 'error'); i++) r = await runDomainStep(c.env, settings, id, undefined, opts);
   const providers = await all<{ provider_id: number }>(c.env.DB, 'SELECT provider_id FROM provider_domains WHERE domain_id = ?', id);
   for (const p of providers) await setupSendingDomain(c.env, settings, p.provider_id, id).catch(() => undefined);
   const health = await checkDomainHealth(c.env, settings, id).catch(() => null);
@@ -550,8 +565,11 @@ admin.patch('/settings', async (c) => {
   const input = await body(c, settingsSchema);
   const before = await settingsOf(c);
   // Only the fields sent: saving appUrl as undefined would delete it.
-  await saveSettings(c.env.DB, { ...input, ...(input.appUrl !== undefined ? { appUrl: input.appUrl.replace(/\/$/, '') } : {}) });
+  const appUrl = input.appUrl?.replace(/\/$/, '');
+  await saveSettings(c.env.DB, { ...input, ...(appUrl !== undefined ? { appUrl } : {}) });
   if (input.senderLogos === 'on' && before.senderLogos !== 'on') await noteRecentSenders(c.env.DB);
+  // Relays in other Cloudflare accounts pass mail to the app's address.
+  if (appUrl && appUrl !== before.appUrl) await updateRelays(c.env, { ...before, appUrl }, appUrl);
   await audit(c.env.DB, { userId: currentUser(c).id, action: 'settings.updated', details: input, ip: clientIp(c) });
   return c.json({ ok: true });
 });

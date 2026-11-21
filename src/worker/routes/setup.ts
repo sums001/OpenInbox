@@ -4,7 +4,7 @@ import type { AppBindings } from '../types';
 import { body } from '../lib/validate';
 import { claimSchema, setupTokenSchema } from '../../shared/schemas';
 import { isSetupComplete, loadSettings } from '../db/settings';
-import { conflict, HttpError } from '../lib/errors';
+import { badRequest, conflict, HttpError } from '../lib/errors';
 import { safeEqual } from '../lib/crypto';
 import { connectToken, keyState, setupStatus } from '../services/setup';
 import { claimInstance } from '../services/users';
@@ -38,7 +38,7 @@ setup.get('/zones/:zoneId', async (c) => {
   const settings = await loadSettings(c.env.DB, true);
   const cf = await cfFromEnv(c.env, settings);
   if (!cf) throw new HttpError(409, 'no_cf_token', 'Connect a Cloudflare token first.');
-  return c.json(await inspectZone(cf, c.req.param('zoneId'), settings.cfWorkerName));
+  return c.json(await inspectZone(cf, c.req.param('zoneId'), settings));
 });
 
 setup.post('/claim', async (c) => {
@@ -56,7 +56,8 @@ setup.post('/claim', async (c) => {
   if (!settings.cfWorkerName) throw new HttpError(409, 'worker_unknown', 'Finish the checks above first.');
   const cf = await cfFromEnv(c.env, settings);
   if (!cf) throw new HttpError(409, 'no_cf_token', 'Connect a Cloudflare token first.');
-  const inspection = await inspectZone(cf, input.zoneId, settings.cfWorkerName);
+  const inspection = await inspectZone(cf, input.zoneId, settings);
+  if (inspection.relayed) throw badRequest(`${inspection.name} is in another Cloudflare account. Start with a domain in this Worker's account; add the others in Admin → Domains afterwards.`);
   if (inspection.mxState === 'other' && !input.replaceMx) {
     throw new HttpError(409, 'mx_conflict', `${inspection.name} already receives mail elsewhere. Confirm that OpenInbox should take over its mail.`, {
       mx: inspection.mx,

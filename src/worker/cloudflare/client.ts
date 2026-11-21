@@ -42,14 +42,16 @@ export class Cloudflare {
     private base = DEFAULT_CF_API,
   ) {}
 
+  // A FormData body is sent as multipart (Worker uploads); anything else as JSON.
   async envelope<T>(method: string, path: string, body?: unknown): Promise<Envelope<T>> {
+    const form = body instanceof FormData;
     const res = await fetch(this.base + path, {
       method,
       headers: {
         Authorization: `Bearer ${this.token}`,
-        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(body !== undefined && !form ? { 'Content-Type': 'application/json' } : {}),
       },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: form ? body : body !== undefined ? JSON.stringify(body) : undefined,
     });
     const text = await res.text();
     let json: Envelope<T>;

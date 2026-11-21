@@ -71,7 +71,7 @@ OpenInbox is built for everyday conversations. It is not a bulk or marketing sen
 ## Features
 
 **Mail**
-- Receive on any domain in your Cloudflare account. Email Routing is set up for you.
+- Receive on any domain in your Cloudflare account. Email Routing is set up for you. Domains in your other Cloudflare accounts work too, through a small relay Worker.
 - Send through Resend, Brevo, Mailjet, Cloudflare Email Sending or any SMTP server. When one provider hits its free limit, mail falls back to another.
 - Threads, All Mail, search (`from:` `has:attachment` `before:`), labels, filters, snooze, scheduled and undo send.
 - Command palette and keyboard shortcuts, dark mode, mobile layout.
@@ -193,6 +193,19 @@ Everything runs inside your own Cloudflare account. There is no OpenInbox server
 | Account | Email Sending | Edit | optional: send through Cloudflare |
 | Account | Account Analytics | Read | optional: usage on the dashboard |
 | Account | Workers R2 Storage | Edit | optional: attachments bucket |
+
+</details>
+
+<details>
+<summary>Domains in another Cloudflare account</summary>
+
+Email Routing hands a domain's mail only to a Worker in that domain's own Cloudflare account. For a domain in another account, OpenInbox installs a small relay Worker there (`openinbox-relay`) that passes each message to OpenInbox over HTTPS. Mail, filters, spam handling and auto-replies work as for any other domain.
+
+- **The token must reach both accounts.** An account token sees only its own account, so create a user token instead (**My Profile → API Tokens**) with the permissions above on each account, including **Workers Scripts: Edit**. Then **Admin → Domains → Add a domain** lists the other account's zones with the account's name.
+- **The relay calls the app's address**: the **App address** in **Admin → Settings**, or the one setup ran from. Changing it there updates the relays. If one still calls the old address, the domain's checks say so and **Repair** fixes it.
+- **Forwarding** from such a domain is done by the relay in that account, so a forwarding address must be a verified destination in that account too.
+- The web app can't open on `mail.` of such a domain: use a domain in the Worker's own account for that.
+- Removing the last domain of an account removes its relay.
 
 </details>
 
