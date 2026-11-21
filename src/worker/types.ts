@@ -1,6 +1,6 @@
 import type { Env } from './env';
 import type { AppSettings } from './db/settings';
-import type { Role } from '../shared/constants';
+import type { ApiScope, Role } from '../shared/constants';
 
 export interface SessionUser {
   id: number;
@@ -17,11 +17,22 @@ export interface SessionInfo {
   mfaPending: boolean;
 }
 
+// The API key behind an /api/v1 request.
+export interface ApiKeyInfo {
+  id: number;
+  // 'device': the key of a phone connected by QR code (services/devices.ts).
+  kind: 'key' | 'device';
+  name: string;
+  scopes: ApiScope[];
+  mailboxIds: number[] | null;
+}
+
 export type AppBindings = {
   Bindings: Env;
   Variables: {
     settings: AppSettings;
     user: SessionUser | null;
     session: SessionInfo | null;
+    apiKey: ApiKeyInfo | null;
   };
 };

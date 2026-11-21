@@ -68,6 +68,21 @@ export interface ProviderAdapter {
   setupWebhook?(url: string): Promise<WebhookSetup | null>;
   // Deletes a webhook created by setupWebhook. Throws ProviderError.
   removeWebhook?(id: string): Promise<void>;
+  // A message the provider sent, as its API returns it: for mail other apps send through the same
+  // account. Throws ProviderError.
+  getSentEmail?(id: string): Promise<SentEmail>;
+}
+
+export interface SentEmail {
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  replyTo: string[];
+  subject: string;
+  text: string | null;
+  html: string | null;
+  // The provider's last delivery event (delivered, bounced, ...), when it reports one.
+  lastEvent: string | null;
 }
 
 export class ProviderError extends Error {
