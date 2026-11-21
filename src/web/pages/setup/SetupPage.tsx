@@ -5,7 +5,7 @@ import { ArrowLeft, Check, ChevronDown, CircleCheck, CircleDashed, CircleX, Clou
 import { ApiError, errorText, get, post } from '../../lib/api';
 import { cn, downloadBlob } from '../../lib/utils';
 import { runDomainSetup } from '../../lib/domain-setup';
-import { ACCOUNT_TOKENS_URL, tokenTemplateUrl, TOKEN_PERMISSIONS } from '../../../shared/constants';
+import { USER_TOKENS_URL, tokenTemplateUrl, TOKEN_PERMISSIONS } from '../../../shared/constants';
 import type { DomainSetupStep, PermissionCheck, ZoneInspection } from '../../lib/types';
 import { LogoMark } from '../../components/Logo';
 import { Button } from '../../components/ui/button';
@@ -648,7 +648,7 @@ function TokenForm({
             <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface text-[11px] font-semibold text-muted ring-1 ring-border">1</span>
             <div className="min-w-0 flex-1">
               <div className="text-[13px] font-medium">Create a token</div>
-              <div className="mt-0.5 text-[12.5px] text-muted">The link opens Cloudflare with the permissions filled in. Choose your account and domains, then create the token and copy it.</div>
+              <div className="mt-0.5 text-[12.5px] text-muted">The link opens Cloudflare with every permission filled in, for all your accounts and domains. Create the token and copy it.</div>
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                 <a href={tokenTemplateUrl()} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[13px] font-medium text-primary-fg hover:bg-primary-hover">
                   <Cloud className="h-4 w-4" /> Create token <ExternalLink className="h-3.5 w-3.5" />
@@ -656,7 +656,7 @@ function TokenForm({
                 <button type="button" className="inline-flex items-center gap-1 text-[12.5px] text-muted hover:text-fg" onClick={() => setShowPerms((s) => !s)} aria-expanded={showPerms}>
                   What it can do <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', showPerms && 'rotate-180')} />
                 </button>
-                <a href={ACCOUNT_TOKENS_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12.5px] text-muted hover:text-fg">
+                <a href={USER_TOKENS_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12.5px] text-muted hover:text-fg">
                   API tokens page <ExternalLink className="h-3 w-3" />
                 </a>
               </div>
