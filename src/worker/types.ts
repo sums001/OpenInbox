@@ -20,6 +20,9 @@ export interface SessionInfo {
 // The API key behind an /api/v1 request.
 export interface ApiKeyInfo {
   id: number;
+  // 'device': the key of a phone connected by QR code (services/devices.ts).
+  kind: 'key' | 'device';
+  name: string;
   scopes: ApiScope[];
   mailboxIds: number[] | null;
 }

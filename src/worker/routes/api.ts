@@ -11,9 +11,10 @@ import { FOLDERS, type Folder } from '../../shared/constants';
 import { all, first, placeholders, run } from '../db/db';
 import { loadSettings } from '../db/settings';
 import { assertMessage, assertThread } from '../auth/access';
-import { currentUser } from '../auth/middleware';
+import { clientIp, currentUser } from '../auth/middleware';
 import { assertKeyMailbox, currentKey, keyMailboxes, requireScope } from '../auth/api-key';
-import { badRequest, HttpError, notFound } from '../lib/errors';
+import { badRequest, conflict, HttpError, notFound } from '../lib/errors';
+import { audit } from '../services/audit';
 import { parseJson } from '../lib/json';
 import { contentDisposition } from '../mail/decode';
 import { normalizeAddress, type Address } from '../mail/address';
@@ -31,7 +32,18 @@ const MIME_TYPE = /^[\w.+-]+\/[\w.+-]+$/;
 api.get('/me', (c) => {
   const user = currentUser(c);
   const key = currentKey(c);
-  return c.json({ user: { id: user.id, email: user.email, name: user.name }, key: { id: key.id, scopes: key.scopes, mailboxIds: key.mailboxIds } });
+  return c.json({ user: { id: user.id, email: user.email, name: user.name }, key: { id: key.id, kind: key.kind, scopes: key.scopes, mailboxIds: key.mailboxIds } });
+});
+
+// A phone connected by QR code disconnects itself (Remove from phone in the app): its key is
+// deleted, and it leaves Settings > Devices. An API key created by hand is the user's to delete.
+api.post('/device/disconnect', async (c) => {
+  const user = currentUser(c);
+  const key = currentKey(c);
+  if (key.kind !== 'device') throw conflict('This is an API key, not a connected phone. Delete it in Settings > API keys.');
+  await run(c.env.DB, 'DELETE FROM api_keys WHERE id = ?', key.id);
+  await audit(c.env.DB, { userId: user.id, action: 'account.device_removed', target: key.name, details: { by: 'device' }, ip: clientIp(c) });
+  return c.json({ ok: true });
 });
 
 api.get('/mailboxes', requireScope('read'), async (c) => {

@@ -67,10 +67,11 @@ Errors use HTTP status codes and a JSON body:
 
 ### `GET /me`
 
-The key's user and limits.
+The key's user and limits. `kind` is `key` for a key made in Settings > API keys, or `device` for
+a phone connected by QR code (Settings > Devices).
 
 ```json
-{ "user": { "id": 1, "email": "ann@example.com", "name": "Ann" }, "key": { "id": 7, "scopes": ["read", "send"], "mailboxIds": null } }
+{ "user": { "id": 1, "email": "ann@example.com", "name": "Ann" }, "key": { "id": 7, "kind": "key", "scopes": ["read", "send"], "mailboxIds": null } }
 ```
 
 ### `GET /mailboxes` · `read`
@@ -207,6 +208,12 @@ Searches like the web app: `?q=invoice from:ann has:attachment before:2026-01-01
 `trash`, `snooze` (with `until`, milliseconds), `unsnooze`, `label` and `unlabel` (with
 `labelId`). Threads outside the key's mailboxes are skipped; the response says how many were
 changed: `{ "ok": true, "count": 1 }`.
+
+### `POST /device/disconnect`
+
+For a phone's own key (`kind` `device`): deletes it, so the phone leaves Settings > Devices. The
+mobile app calls it when you remove the account from the phone. Any other key gets `409`; delete
+those in Settings > API keys. Returns `{ "ok": true }`.
 
 ## Example: answer new mail from a script
 

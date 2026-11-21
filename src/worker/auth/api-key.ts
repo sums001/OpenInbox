@@ -20,6 +20,8 @@ export async function newApiKey(): Promise<{ key: string; prefix: string; hash: 
 
 interface KeyRow {
   id: number;
+  kind: string;
+  key_name: string;
   user_id: number;
   scopes: string;
   mailbox_ids: string | null;
@@ -41,7 +43,7 @@ export const apiKeyAuth: MiddlewareHandler<AppBindings> = async (c, next) => {
   const db = c.env.DB;
   const row = await first<KeyRow>(
     db,
-    `SELECT k.id, k.user_id, k.scopes, k.mailbox_ids, k.expires_at, k.last_used_at, u.email, u.name, u.role, u.status, u.totp_enabled, u.preferences
+    `SELECT k.id, k.kind, k.name AS key_name, k.user_id, k.scopes, k.mailbox_ids, k.expires_at, k.last_used_at, u.email, u.name, u.role, u.status, u.totp_enabled, u.preferences
        FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.key_hash = ?`,
     await sha256Hex(m[1]),
   );
@@ -68,7 +70,7 @@ export const apiKeyAuth: MiddlewareHandler<AppBindings> = async (c, next) => {
     totpEnabled: !!row.totp_enabled,
     preferences: parseJson(row.preferences, {}),
   });
-  c.set('apiKey', { id: row.id, scopes: parseJson<ApiScope[]>(row.scopes, []), mailboxIds: parseJson<number[] | null>(row.mailbox_ids, null) });
+  c.set('apiKey', { id: row.id, kind: row.kind === 'device' ? 'device' : 'key', name: row.key_name, scopes: parseJson<ApiScope[]>(row.scopes, []), mailboxIds: parseJson<number[] | null>(row.mailbox_ids, null) });
   return next();
 };
 

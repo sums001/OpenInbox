@@ -68,6 +68,24 @@ describe('connecting a phone', () => {
     expect((await phone('GET', '/api/v1/me', undefined, auth)).status).toBe(401);
   });
 
+  it('lets the phone disconnect itself, but not an API key made by hand', async () => {
+    const p = await start();
+    const claim = await phone('POST', '/api/devices/pair', { code: p.code, name: 'Pixel 8', platform: 'android' });
+    await admin.post(`/api/account/devices/pairing/${p.id}`, { allow: true });
+    const { token } = (await phone('POST', `/api/devices/pair/${p.id}`, { secret: claim.body.secret })).body;
+    const auth = { Authorization: `Bearer ${token}` };
+    expect((await phone('GET', '/api/v1/me', undefined, auth)).body.key.kind).toBe('device');
+    expect((await phone('POST', '/api/v1/device/disconnect', undefined, auth)).body).toEqual({ ok: true });
+    expect((await phone('GET', '/api/v1/me', undefined, auth)).status).toBe(401);
+    expect(await admin.get('/api/account/devices')).toEqual([]);
+
+    const { key } = await admin.post('/api/account/api-keys', { password: 'correct horse battery', name: 'Script', scopes: ['read'] });
+    const scriptAuth = { Authorization: `Bearer ${key}` };
+    expect((await phone('GET', '/api/v1/me', undefined, scriptAuth)).body.key.kind).toBe('key');
+    expect((await phone('POST', '/api/v1/device/disconnect', undefined, scriptAuth)).status).toBe(409);
+    expect((await phone('GET', '/api/v1/me', undefined, scriptAuth)).status).toBe(200);
+  });
+
   it('takes the short code typed by hand, and tells the phone when it is denied', async () => {
     const p = await start();
     const typed = p.shortCode.toLowerCase().replace('-', ' ');
