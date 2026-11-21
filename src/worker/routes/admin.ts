@@ -12,6 +12,7 @@ import {
   createMailboxSchema,
   createUserSchema,
   destinationSchema,
+  forwardRuleSchema,
   domainPatchSchema,
   membersSchema,
   providerPatchSchema,
@@ -76,7 +77,7 @@ import { retryMessage } from '../services/send';
 import { enforceDmarc, fetchLogo, getSenderLogo, removeSenderLogo, setSenderLogo } from '../services/bimi';
 import { noteRecentSenders } from '../services/sender-logos';
 import { deleteBlobs } from '../services/threads';
-import { forwardDestinations } from '../services/forwarding';
+import { forwardDestinations, forwardRules, moveForwardRule, setForwardRuleEnabled } from '../services/forwarding';
 import { Cloudflare, cfFromEnv, DEFAULT_CF_API } from '../cloudflare/client';
 import { checkPermissions, listZones, verifyToken, zoneAccess } from '../cloudflare/token';
 import { createDestination, deleteDestination, disableRule, listDestinations, listRules } from '../cloudflare/email-routing';
@@ -670,6 +671,23 @@ admin.delete('/blocked/:id', async (c) => {
 // Forwarding destinations (Email Routing destination addresses) ---------------------------------
 
 admin.get('/forwarding', async (c) => c.json(await forwardDestinations(c.env, await settingsOf(c), 'always')));
+
+// Cloudflare's forwarding rules for single addresses, which bypass OpenInbox (services/forwarding.ts).
+admin.get('/forwarding/rules', async (c) => c.json(await forwardRules(c.env, await settingsOf(c))));
+
+admin.post('/forwarding/rules/move', async (c) => {
+  const { domainId, ruleId } = await body(c, forwardRuleSchema);
+  const r = await moveForwardRule(c.env, await settingsOf(c), domainId, ruleId);
+  await audit(c.env.DB, { userId: currentUser(c).id, action: 'forwarding.rule_moved', target: r.address, details: { to: r.to }, ip: clientIp(c) });
+  return c.json(r);
+});
+
+admin.post('/forwarding/rules/toggle', async (c) => {
+  const { domainId, ruleId, enabled } = await body(c, forwardRuleSchema);
+  await setForwardRuleEnabled(c.env, await settingsOf(c), domainId, ruleId, enabled !== false);
+  await audit(c.env.DB, { userId: currentUser(c).id, action: enabled === false ? 'forwarding.rule_off' : 'forwarding.rule_on', target: ruleId, ip: clientIp(c) });
+  return c.json({ ok: true });
+});
 
 admin.post('/forwarding', async (c) => {
   const settings = await settingsOf(c);

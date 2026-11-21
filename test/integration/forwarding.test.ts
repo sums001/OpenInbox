@@ -1,6 +1,7 @@
 // Forwarding: the message stays in OpenInbox and Cloudflare forwards a copy to each verified
 // address the mailbox (or a filter) picked.
 import { beforeEach, describe, expect, it } from 'vitest';
+import { env } from 'cloudflare:test';
 import { useFakeApis } from '../helpers/fake';
 import { Client, deliver, email, setupInstance } from '../helpers/client';
 import type { FakeState } from '../mock/fake-apis';
@@ -66,6 +67,46 @@ describe('forwarding', () => {
     expect((await send('Invoice 7')).forwarded.sort()).toEqual(['books@accounting.test', 'me@gmail.test']);
     expect((await send('Receipt 3')).forwarded).toEqual(['me@gmail.test']);
     expect((await send('Lunch?')).forwarded).toEqual(['me@gmail.test']);
+  });
+
+  it('lists the addresses already verified in Cloudflare', async () => {
+    fake.state.destinations.push({ id: 'dest_old', email: 'Old@Gmail.test', verified: '2026-01-02T03:04:05Z' }, { id: 'dest_new', email: 'new@gmail.test', verified: null });
+    expect(await admin.get('/api/admin/forwarding')).toEqual([
+      { address: 'new@gmail.test', verified: false },
+      { address: 'old@gmail.test', verified: true },
+    ]);
+    // A mailbox can forward to the verified one straight away.
+    await admin.patch(`/api/mailboxes/${boxId}/settings`, { forwardTo: ['old@gmail.test'] });
+    expect((await send('Hello')).forwarded).toEqual(['old@gmail.test']);
+  });
+
+  it('moves a Cloudflare forwarding rule into OpenInbox, keeping the forward', async () => {
+    fake.state.destinations.push({ id: 'dest_alice', email: 'alice@gmail.test', verified: '2026-01-02T03:04:05Z' });
+    fake.state.rules.zone_example = [
+      { id: 'rule_alice', name: '', enabled: true, matchers: [{ type: 'literal', field: 'to', value: 'Alice@example.com' }], actions: [{ type: 'forward', value: ['alice@gmail.test'] }] },
+      { id: 'rule_drop', name: '', enabled: true, matchers: [{ type: 'literal', field: 'to', value: 'noise@example.com' }], actions: [{ type: 'drop' }] },
+    ];
+    expect(await admin.get('/api/admin/forwarding/rules')).toEqual([
+      { domainId: expect.any(Number), domain: 'example.com', ruleId: 'rule_alice', address: 'alice@example.com', to: ['alice@gmail.test'], enabled: true, inOpenInbox: false },
+    ]);
+    const { domainId } = (await admin.get('/api/admin/forwarding/rules'))[0];
+
+    // Off and on again, in Cloudflare.
+    await admin.post('/api/admin/forwarding/rules/toggle', { domainId, ruleId: 'rule_alice', enabled: false });
+    expect(fake.state.rules.zone_example[0].enabled).toBe(false);
+    await admin.post('/api/admin/forwarding/rules/toggle', { domainId, ruleId: 'rule_alice', enabled: true });
+    expect(fake.state.rules.zone_example[0].enabled).toBe(true);
+
+    const moved = await admin.post('/api/admin/forwarding/rules/move', { domainId, ruleId: 'rule_alice' });
+    expect(moved).toMatchObject({ address: 'alice@example.com', to: ['alice@gmail.test'] });
+    expect(fake.state.rules.zone_example[0].enabled).toBe(false);
+    expect((await admin.get('/api/admin/forwarding/rules'))[0]).toMatchObject({ enabled: false, inOpenInbox: true });
+
+    // Mail to alice@ now arrives in a mailbox for her, which forwards as Cloudflare did.
+    const r = await deliver(email({ subject: 'For Alice', to: 'alice@example.com' }), { from: 'ann@sender.test', to: 'alice@example.com' });
+    expect(r).toEqual({ rejected: null, forwarded: ['alice@gmail.test'] });
+    const stored = await env.DB.prepare('SELECT COUNT(*) AS n FROM messages WHERE mailbox_id = ?').bind(moved.mailboxId).first<{ n: number }>();
+    expect(stored?.n).toBe(1);
   });
 
   it('rejects addresses an admin has not added', async () => {

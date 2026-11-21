@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Ban, Key, Plus, Settings, X } from 'lucide-react';
+import { ArrowRight, Ban, Key, Plus, Settings, X } from 'lucide-react';
 import { del, get, patch, post } from '../../lib/api';
 import { timeAgo } from '../../lib/format';
 import { useAction, useInvalidate } from '../../lib/hooks';
@@ -174,8 +174,66 @@ function ForwardingSettings() {
           Add
         </Button>
       </form>
-      <p className="px-5 pb-4 text-xs text-faint text-pretty">Cloudflare emails each one a verification link. Forwarding is free and doesn't use your sending quota.</p>
+      <p className="px-5 pb-4 text-xs text-faint text-pretty">
+        Cloudflare emails each one a verification link. Forwarding is free and doesn&apos;t use your sending quota. Addresses already verified in your Cloudflare account are listed too; removing one removes it there.
+      </p>
+      <ForwardRules />
     </Card>
+  );
+}
+
+interface ForwardRule {
+  domainId: number;
+  domain: string;
+  ruleId: string;
+  address: string;
+  to: string[];
+  enabled: boolean;
+  inOpenInbox: boolean;
+}
+
+// Cloudflare's own forwarding rules for single addresses. While one is on, mail to that address
+// goes straight to its destination and never reaches OpenInbox.
+function ForwardRules() {
+  const q = useQuery({ queryKey: ['admin', 'forwarding-rules'], queryFn: () => get<ForwardRule[]>('/admin/forwarding/rules') });
+  const invalidate = useInvalidate();
+  const { run, busy } = useAction();
+  if (!q.data?.length) return null;
+  const key = (r: ForwardRule) => `${r.domainId}:${r.ruleId}`;
+  const done = () => Promise.all([q.refetch(), invalidate(['admin', 'forwarding'], ['admin', 'mailboxes'])]);
+  return (
+    <div className="border-t border-border">
+      <div className="px-5 pt-3.5 pb-1">
+        <div className="text-[13px] font-semibold">Forwarding set up in Cloudflare</div>
+        <p className="mt-0.5 text-xs text-muted text-pretty">
+          While one of these is on, mail to that address goes straight to its destination and never reaches OpenInbox. Move it in: OpenInbox keeps a copy in a mailbox for the address and forwards it as before. Add members to that mailbox to read it here.
+        </p>
+      </div>
+      {q.data.map((r) => (
+        <div key={key(r)} className={row}>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-1.5 truncate">
+              <span className="truncate font-medium">{r.address}</span>
+              <ArrowRight className="h-3 w-3 shrink-0 text-faint" />
+              <span className="truncate text-muted">{r.to.join(', ')}</span>
+            </div>
+            <div className="text-xs text-faint">{r.enabled ? 'On in Cloudflare: bypasses OpenInbox' : r.inOpenInbox ? 'Off: mail arrives in OpenInbox' : 'Off'}</div>
+          </div>
+          {r.enabled && (
+            <Button size="xs" variant="primary" loading={busy === `move:${key(r)}`} onClick={() => run(`move:${key(r)}`, () => post('/admin/forwarding/rules/move', { domainId: r.domainId, ruleId: r.ruleId }).then(done), `${r.address} now arrives in OpenInbox`)}>
+              Move into OpenInbox
+            </Button>
+          )}
+          <button
+            type="button"
+            className="text-[12.5px] text-muted hover:text-fg"
+            onClick={() => run(`toggle:${key(r)}`, () => post('/admin/forwarding/rules/toggle', { domainId: r.domainId, ruleId: r.ruleId, enabled: !r.enabled }).then(done))}
+          >
+            {busy === `toggle:${key(r)}` ? '…' : r.enabled ? 'Turn off' : 'Turn on'}
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }
 

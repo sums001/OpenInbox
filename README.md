@@ -74,7 +74,7 @@ OpenInbox is built for everyday conversations. It is not a bulk or marketing sen
 - Receive on any domain in your Cloudflare account. Email Routing is set up for you.
 - Send through Resend, Brevo, Mailjet, Cloudflare Email Sending or any SMTP server. When one provider hits its free limit, mail falls back to another.
 - Threads, All Mail, search (`from:` `has:attachment` `before:`), labels, filters, snooze, scheduled and undo send.
-- Forwarding: keep the mail here and forward a copy to Gmail or any other address. Cloudflare does the forwarding, so it doesn't use your sending quota.
+- Forwarding: keep the mail here and forward a copy to Gmail or any other address. Cloudflare does the forwarding, so it doesn't use your sending quota. Addresses already verified in Cloudflare show up, and Cloudflare forwarding rules for single addresses (which bypass OpenInbox) can be turned off or moved in, keeping their forward.
 - Command palette and keyboard shortcuts, dark mode, mobile layout.
 
 **Teams**
