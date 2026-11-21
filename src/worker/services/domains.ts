@@ -206,11 +206,31 @@ async function stepRelay(cf: Cloudflare, env: Env, settings: AppSettings, d: Dom
   return `Installed the ${relayWorkerName(settings)} Worker there; it passes mail to ${appBase.replace(/\/+$/, '')}.`;
 }
 
-async function stepCatchAll(cf: Cloudflare, d: DomainRow, workerName: string): Promise<string> {
+// The owner's first mailbox: where a domain's mail goes when nothing else is set up for it.
+export async function ownerMailbox(db: D1Database): Promise<{ id: number; address: string } | null> {
+  return first<{ id: number; address: string }>(
+    db,
+    `SELECT m.id, m.address FROM mailboxes m JOIN mailbox_members mm ON mm.mailbox_id = m.id JOIN users u ON u.id = mm.user_id
+     WHERE u.role = 'owner' AND u.status = 'active' ORDER BY m.created_at LIMIT 1`,
+  );
+}
+
+async function stepCatchAll(cf: Cloudflare, db: D1Database, d: DomainRow, workerName: string): Promise<string> {
   const rule = await getCatchAll(cf, d.zone_id);
   if (catchAllTargetsWorker(rule, workerName)) return 'Already routed to OpenInbox.';
   await setCatchAllToWorker(cf, d.zone_id, workerName);
-  return d.account_id ? `All mail for ${d.name} now goes to OpenInbox through the ${workerName} Worker.` : `All mail for ${d.name} now goes to the ${workerName} Worker.`;
+  let message = d.account_id ? `All mail for ${d.name} now goes to OpenInbox through the ${workerName} Worker.` : `All mail for ${d.name} now goes to the ${workerName} Worker.`;
+  // Mail to any address used to arrive somewhere (forwarded, or another Worker): keep it arriving,
+  // in the owner's mailbox, instead of bouncing until mailboxes exist.
+  const before = rule?.enabled ? rule.actions.find((a) => a.type !== 'drop') : undefined;
+  if (before && !d.catch_all_mailbox_id) {
+    const box = await ownerMailbox(db);
+    if (box) {
+      await run(db, 'UPDATE domains SET catch_all_mailbox_id = ? WHERE id = ? AND catch_all_mailbox_id IS NULL', box.id, d.id);
+      message += ` Mail to any address went to ${before.value?.join(', ') || `a ${before.type} rule`} before; it now arrives in ${box.address}.`;
+    }
+  }
+  return message;
 }
 
 async function stepDmarc(cf: Cloudflare, d: DomainRow): Promise<string> {
@@ -257,7 +277,7 @@ export async function runDomainStep(env: Env, settings: AppSettings, domainId: n
     let message: string;
     if (step === 'routing') message = await stepRouting(cf, d, state);
     else if (step === 'relay') message = await stepRelay(cf, env, settings, d, opts.appBase ?? settings.appUrl);
-    else if (step === 'catchall') message = await stepCatchAll(cf, d, workerName);
+    else if (step === 'catchall') message = await stepCatchAll(cf, env.DB, d, workerName);
     else if (step === 'dmarc') message = await stepDmarc(cf, d);
     else message = await stepVerify(cf, d, workerName);
     state.steps[step] = { status: 'done', message, at: Date.now() };

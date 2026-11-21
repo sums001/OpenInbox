@@ -12,6 +12,7 @@ import { Button, IconButton } from '../../components/ui/button';
 import { Checkbox, Field, Input, Select } from '../../components/ui/form';
 import { Alert, Card, EmptyState, IconTile, PageHeader, PageSpinner } from '../../components/ui/misc';
 import { ConfirmDialog, Dialog, Menu, MenuItem } from '../../components/ui/overlay';
+import { AutoAddDomains } from '../../components/AutoAddDomains';
 
 export function DomainsPage() {
   const domains = useQuery({ queryKey: ['admin', 'domains'], queryFn: () => get<DomainInfo[]>('/admin/domains') });
@@ -33,6 +34,7 @@ export function DomainsPage() {
           </Button>
         }
       />
+      <NewDomainsBanner onChanged={refresh} />
       {domains.data?.length === 0 ? (
         <Card>
           <EmptyState
@@ -621,6 +623,48 @@ function AppDomainDialog({ domain, onClose, onDone }: { domain: DomainInfo; onCl
         </Field>
       )}
     </Dialog>
+  );
+}
+
+// Zones in the person's Cloudflare accounts that aren't here yet (the hourly check adds them on its
+// own when automatic domains are on): one click sets them all up now.
+function NewDomainsBanner({ onChanged }: { onChanged: () => void }) {
+  const zones = useQuery({ queryKey: ['admin', 'zones'], queryFn: () => get<{ id: string; name: string; status: string; connected: boolean; usable: boolean | null; account: string | null }[]>('/admin/zones') });
+  const auto = useQuery({ queryKey: ['admin', 'domains-auto'], queryFn: () => get<{ skipped: { zoneId: string }[] }>('/admin/domains/auto') });
+  const [open, setOpen] = useState(false);
+  const left = new Set((auto.data?.skipped ?? []).map((s) => s.zoneId));
+  const waiting = (zones.data ?? []).filter((z) => !z.connected && z.status === 'active' && z.usable !== false && !left.has(z.id));
+  const close = () => {
+    setOpen(false);
+    zones.refetch();
+    auto.refetch();
+    onChanged();
+  };
+  if (!waiting.length && !open) return null;
+  return (
+    <>
+      {!!waiting.length && (
+        <Card className="flex flex-wrap items-center gap-3.5 px-5 py-3.5">
+          <IconTile tone="warning" size={36}>
+            <Globe />
+          </IconTile>
+          <div className="min-w-0 flex-1 text-[13px]">
+            <div className="font-semibold">
+              {waiting.length} domain{waiting.length === 1 ? '' : 's'} in your Cloudflare accounts {waiting.length === 1 ? "isn't" : "aren't"} set up here yet
+            </div>
+            <div className="truncate text-muted">{waiting.map((z) => (z.account ? `${z.name} (${z.account})` : z.name)).join(', ')}</div>
+          </div>
+          <Button variant="primary" size="sm" onClick={() => setOpen(true)}>
+            Set {waiting.length === 1 ? 'it' : 'them all'} up
+          </Button>
+        </Card>
+      )}
+      {open && (
+        <Dialog open onClose={close} title="Setting up your domains" description="Every domain the Cloudflare token can reach, one after another. Keep this open." footer={<Button onClick={close}>Close</Button>}>
+          <AutoAddDomains />
+        </Dialog>
+      )}
+    </>
   );
 }
 

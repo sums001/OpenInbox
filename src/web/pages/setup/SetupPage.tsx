@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { ArrowLeft, Check, ChevronDown, CircleCheck, CircleDashed, CircleX, Cloud, Download, ExternalLink, KeyRound, LoaderCircle, Mail, RefreshCw, ShieldCheck, Sparkles, TriangleAlert, X } from 'lucide-react';
-import { ApiError, errorText, get, post } from '../../lib/api';
+import { ApiError, errorText, get, patch, post } from '../../lib/api';
 import { cn, downloadBlob } from '../../lib/utils';
 import { runDomainSetup } from '../../lib/domain-setup';
 import { USER_TOKENS_URL, tokenTemplateUrl, TOKEN_PERMISSIONS } from '../../../shared/constants';
@@ -12,6 +12,7 @@ import { Button } from '../../components/ui/button';
 import { Checkbox, Field, Input, PasswordInput, Select } from '../../components/ui/form';
 import { Alert, Badge, Card, CopyButton } from '../../components/ui/misc';
 import { PasswordStrength } from '../../components/PasswordStrength';
+import { AutoAddDomains } from '../../components/AutoAddDomains';
 
 interface Check {
   ok: boolean;
@@ -36,7 +37,7 @@ interface SetupStatus {
   zones: { id: string; name: string; status: string; usable: boolean | null }[];
 }
 
-type Stage = 'checks' | 'admin' | 'domain' | 'done';
+type Stage = 'checks' | 'admin' | 'domain' | 'others' | 'done';
 
 export function SetupPage() {
   const [stage, setStage] = useState<Stage>('checks');
@@ -73,8 +74,9 @@ export function SetupPage() {
     { id: 'checks', label: 'Connect Cloudflare' },
     { id: 'admin', label: 'Create your account' },
     { id: 'domain', label: 'Set up mail' },
+    { id: 'others', label: 'All your domains' },
   ];
-  const current = stage === 'done' ? 3 : steps.findIndex((s) => s.id === stage);
+  const current = stage === 'done' ? steps.length : steps.findIndex((s) => s.id === stage);
 
   return (
     <div className="min-h-full bg-bg">
@@ -124,7 +126,8 @@ export function SetupPage() {
             }}
           />
         )}
-        {stage === 'domain' && claim && <DomainStage claim={claim} onDone={() => setStage('done')} />}
+        {stage === 'domain' && claim && <DomainStage claim={claim} onDone={() => setStage('others')} />}
+        {stage === 'others' && claim && <OtherDomainsStage claim={claim} onDone={() => setStage('done')} />}
         {stage === 'done' && claim && <DoneStage address={claim.address} />}
       </div>
     </div>
@@ -904,6 +907,65 @@ function DomainStage({ claim, onDone }: { claim: { domainId: number; address: st
           </div>
         </div>
       )}
+    </Card>
+  );
+}
+
+// Every other domain the token can reach, in all the owner's Cloudflare accounts, then the app on
+// mail.<first domain>. Nothing to fill in: it runs by itself.
+function OtherDomainsStage({ claim, onDone }: { claim: { domainId: number; address: string; domain: string }; onDone: () => void }) {
+  const [app, setApp] = useState<{ state: 'working' | 'done' | 'skipped'; detail: string } | null>(null);
+  const finished = useCallback(async () => {
+    const url = `https://mail.${claim.domain}`;
+    setApp({ state: 'working', detail: `Opening the app at ${url}…` });
+    try {
+      await post(`/admin/domains/${claim.domainId}/app-domain`, { subdomain: 'mail' });
+    } catch (e) {
+      setApp({ state: 'skipped', detail: `The app stays at this address: ${errorText(e)}` });
+      return;
+    }
+    // Cloudflare needs a minute or two for the certificate. An answer of any kind means it is up.
+    for (let i = 0; i < 30; i++) {
+      try {
+        await fetch(`${url}/api/health`, { mode: 'no-cors', cache: 'no-store' });
+        await patch('/admin/settings', { appUrl: url });
+        setApp({ state: 'done', detail: `The app now also opens at ${url}, its address from now on.` });
+        return;
+      } catch {
+        await new Promise((r) => setTimeout(r, 5000));
+      }
+    }
+    setApp({ state: 'done', detail: `Cloudflare is still preparing ${url}. Once it opens, set it as the App address in Admin → Settings.` });
+  }, [claim.domain, claim.domainId]);
+
+  return (
+    <Card className="p-6">
+      <h2 className="text-base font-semibold">All your domains</h2>
+      <p className="mt-1 text-[13px] text-muted">
+        {claim.domain} is ready. OpenInbox now sets up every other domain the token can reach, in all your Cloudflare accounts. Domains in another account get their mail through a small relay Worker there.
+      </p>
+      <div className="mt-5">
+        <AutoAddDomains onFinished={finished} />
+      </div>
+      {app && (
+        <div className="mt-4 flex gap-2.5 text-[13px]">
+          <span className="mt-0.5">
+            {app.state === 'working' ? <LoaderCircle className="h-4 w-4 animate-spin text-primary" /> : app.state === 'done' ? <CircleCheck className="h-4 w-4 text-success" /> : <CircleDashed className="h-4 w-4 text-faint" />}
+          </span>
+          <span className="text-muted">{app.detail}</span>
+        </div>
+      )}
+      <div className="mt-5 flex justify-end gap-2">
+        {app && app.state !== 'working' ? (
+          <Button variant="primary" onClick={onDone}>
+            Continue
+          </Button>
+        ) : (
+          <Button variant="ghost" onClick={onDone}>
+            Skip for now
+          </Button>
+        )}
+      </div>
     </Card>
   );
 }

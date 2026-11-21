@@ -71,7 +71,7 @@ OpenInbox is built for everyday conversations. It is not a bulk or marketing sen
 ## Features
 
 **Mail**
-- Receive on any domain in your Cloudflare account. Email Routing is set up for you. Domains in your other Cloudflare accounts work too, through a small relay Worker.
+- Receive on every domain in your Cloudflare accounts. Email Routing is set up for you, for all of them at once, and new domains are picked up every hour. Domains in another account than the Worker's work through a small relay Worker.
 - Send through Resend, Brevo, Mailjet, Cloudflare Email Sending or any SMTP server. When one provider hits its free limit, mail falls back to another.
 - Threads, All Mail, search (`from:` `has:attachment` `before:`), labels, filters, snooze, scheduled and undo send.
 - Command palette and keyboard shortcuts, dark mode, mobile layout.
@@ -145,7 +145,7 @@ Everything runs inside your own Cloudflare account. There is no OpenInbox server
 
 **1. Click Deploy to Cloudflare**, then **Deploy**. The form asks for nothing else. Keep the default names or change them.
 
-**2. Open the Worker's `workers.dev` address.** The setup page asks for a Cloudflare API token, which OpenInbox uses to set up Email Routing and DNS for you. Click **Create token**: Cloudflare opens with every permission filled in, so you only click **Continue to summary → Create Token** and paste the token back. It is stored encrypted.
+**2. Open the Worker's `workers.dev` address.** The setup page asks for a Cloudflare API token, which OpenInbox uses to set up Email Routing and DNS for you. Click **Create token**: Cloudflare opens with every permission filled in, for all your accounts and domains, so you only click **Continue to summary → Create Token** and paste the token back. It is stored encrypted.
 
 > [!TIP]
 > If the Worker shows no `workers.dev` URL, turn it on in the Worker's **Settings → Domains & Routes**.
@@ -153,7 +153,9 @@ Everything runs inside your own Cloudflare account. There is no OpenInbox server
 > [!IMPORTANT]
 > Connecting the token creates your **recovery key** and shows it **once**. Save it in a password manager. You paste it to finish setup, and it is the only way back into the owner account if you lose your password.
 
-**3. Follow the setup page.** It checks the token's permissions, creates your admin account and connects your domain.
+**3. Follow the setup page.** It checks the token's permissions, creates your admin account and connects your domain. Then it sets up every other domain the token reaches, in all your accounts, and opens the app on `mail.` of your first domain.
+
+A domain whose mail goes to another provider (its MX records point elsewhere) is left for you to add, since taking it over would cut that mail off. A domain whose mail went somewhere before, such as a Gmail forward, keeps arriving: in your mailbox, until you create others. **Admin → Settings → New domains in Cloudflare** turns the hourly check off.
 
 **4. Connect a sending provider** in **Admin → Integrations**.
 

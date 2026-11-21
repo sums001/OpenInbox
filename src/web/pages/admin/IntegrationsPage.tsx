@@ -12,6 +12,7 @@ import { Field, Input, PasswordInput, SegmentedControl, Select } from '../../com
 import { Alert, Badge, Card, CardHeader, Meter, PageHeader, PageSpinner, StatusDot, StatusPill } from '../../components/ui/misc';
 import { ConfirmDialog, Dialog, Menu, MenuItem, MenuSeparator } from '../../components/ui/overlay';
 import { PermissionList } from '../setup/SetupPage';
+import { AutoAddDomains } from '../../components/AutoAddDomains';
 
 export function IntegrationsPage() {
   useEffect(() => {
@@ -540,21 +541,27 @@ interface CloudflareInfo {
   account?: { id: string | null; name: string | null };
   worker?: { name: string | null; subdomain: string | null; d1Id: string | null };
   permissions: PermissionCheck[];
+  // Every account the token reaches. relay: whether the token can install the relay Worker there.
+  accounts?: { id: string; name: string; worker: boolean; zones: number; connected: number; relay: 'ok' | 'no_access' | null }[];
 }
 
 function CloudflareSection() {
   const cf = useQuery({ queryKey: ['admin', 'cloudflare'], queryFn: () => get<CloudflareInfo>('/admin/cloudflare') });
   const [token, setToken] = useState('');
   const [replacing, setReplacing] = useState(false);
+  // After a new token, the domains it reaches are set up (when automatic domains are on).
+  const [adding, setAdding] = useState(false);
+  const invalidate = useInvalidate();
   const { run, busy } = useAction();
   const data = cf.data;
+  const others = (data?.accounts?.length ?? 1) - 1;
   const source = data?.source === 'secret' ? 'token from the CF_API_TOKEN secret' : data?.source === 'stored' ? 'token pasted in OpenInbox' : 'no token';
   return (
     <Card>
       <CardHeader
         icon={<Cloud />}
         title="Cloudflare connection"
-        description={data ? `${data.connected ? (data.account?.name ?? 'Connected') : (data.message ?? 'No API token')} · ${source}` : undefined}
+        description={data ? `${data.connected ? `${data.account?.name ?? 'Connected'}${others > 0 ? ` + ${others} more account${others === 1 ? '' : 's'}` : ''}` : (data.message ?? 'No API token')} · ${source}` : undefined}
         action={
           data?.source !== 'secret' ? (
             <Button size="xs" icon={<KeyRound />} onClick={() => setReplacing((r) => !r)}>
@@ -575,10 +582,12 @@ function CloudflareSection() {
                 run(
                   'token',
                   () =>
-                    post('/admin/cloudflare/token', { token }).then(() => {
+                    post('/admin/cloudflare/token', { token }).then(async () => {
                       setToken('');
                       setReplacing(false);
                       cf.refetch();
+                      const s = await get<{ autoDomains: 'on' | 'off' }>('/admin/settings');
+                      if (s.autoDomains === 'on') setAdding(true);
                     }),
                   'Token saved',
                 );
@@ -615,11 +624,53 @@ function CloudflareSection() {
             <dt className="text-faint">D1 database</dt>
             <dd className="truncate font-mono text-xs">{data?.worker?.d1Id ?? '–'}</dd>
           </dl>
+          {!!data?.accounts?.length && (
+            <div className="border-t border-border pt-3">
+              <div className="mb-1.5 text-xs font-medium text-faint">Accounts this token reaches</div>
+              <ul className="space-y-1 text-[12.5px]">
+                {data.accounts.map((a) => (
+                  <li key={a.id} className="flex items-center gap-2">
+                    {a.relay === 'no_access' ? <CircleX className="h-3.5 w-3.5 shrink-0 text-danger" /> : <CircleCheck className="h-3.5 w-3.5 shrink-0 text-success" />}
+                    <span className="font-medium">{a.name}</span>
+                    <span className="min-w-0 truncate text-muted">
+                      {a.worker ? 'this Worker' : a.relay === 'no_access' ? 'the token needs Workers Scripts: Edit here for the relay' : a.zones ? 'through a relay' : ''}
+                    </span>
+                    <span className="ml-auto shrink-0 text-muted">{a.zones ? `${a.connected} of ${a.zones} domain${a.zones === 1 ? '' : 's'} here` : 'no domains'}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="border-t border-border pt-3">
             <div className="mb-1 text-xs font-medium text-faint">Permissions</div>
             {data?.permissions.length ? <PermissionList permissions={data.permissions} compact /> : <div className="text-[13px] text-muted">Unavailable.</div>}
           </div>
         </div>
+      )}
+      {adding && (
+        <Dialog
+          open
+          onClose={() => {
+            setAdding(false);
+            cf.refetch();
+            invalidate(['admin', 'domains'], ['admin', 'zones']);
+          }}
+          title="Setting up the domains this token reaches"
+          description="Every domain in the token's accounts that isn't here yet. Keep this open."
+          footer={
+            <Button
+              onClick={() => {
+                setAdding(false);
+                cf.refetch();
+                invalidate(['admin', 'domains'], ['admin', 'zones']);
+              }}
+            >
+              Close
+            </Button>
+          }
+        >
+          <AutoAddDomains />
+        </Dialog>
       )}
     </Card>
   );

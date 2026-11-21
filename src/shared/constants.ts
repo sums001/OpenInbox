@@ -30,9 +30,12 @@ export const DEFAULT_SETTINGS = {
   spamPolicy: 'spam' as SpamPolicy,
   remoteImages: 'block' as RemoteImagesPolicy,
   senderLogos: 'off' as SenderLogosPolicy,
+  autoDomains: 'on' as AutoDomainsPolicy,
 };
 
 export type SpamPolicy = 'spam' | 'reject' | 'off';
+// 'on': every zone the Cloudflare token can reach, in any account, is added and set up by itself.
+export type AutoDomainsPolicy = 'on' | 'off';
 export type RemoteImagesPolicy = 'block' | 'allow';
 // Senders' BIMI logos next to their mail, for the whole instance.
 export type SenderLogosPolicy = 'off' | 'on';

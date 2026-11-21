@@ -78,6 +78,7 @@ import { noteRecentSenders } from '../services/sender-logos';
 import { deleteBlobs } from '../services/threads';
 import { Cloudflare, cfFromEnv, DEFAULT_CF_API } from '../cloudflare/client';
 import { updateRelays } from '../services/relay';
+import { addNewZones, rememberRemoved, skippedZones, tokenAccounts } from '../services/auto-domains';
 import { checkPermissions, listZones, verifyToken, zoneAccess } from '../cloudflare/token';
 import { createDestination, deleteDestination, disableRule, listDestinations, listRules } from '../cloudflare/email-routing';
 import { R2S3Store, type R2Config } from '../storage/r2';
@@ -254,6 +255,18 @@ admin.post('/domains', async (c) => {
   return c.json({ id: d.id });
 });
 
+// Adds the zones the token can reach that are not here yet, a few per call (see auto-domains.ts).
+admin.post('/domains/auto', async (c) => {
+  const settings = await settingsOf(c);
+  requireWorker(settings);
+  return c.json(await addNewZones(c.env, settings));
+});
+
+admin.get('/domains/auto', async (c) => {
+  const taken = new Set((await all<{ name: string }>(c.env.DB, 'SELECT name FROM domains')).map((d) => d.name.toLowerCase()));
+  return c.json({ skipped: (await skippedZones(c.env.DB)).filter((s) => !taken.has(s.name.toLowerCase())) });
+});
+
 admin.post('/domains/:id/setup', async (c) => {
   const settings = await settingsOf(c);
   const step = (c.req.query('step') as StepId | undefined) || undefined;
@@ -357,6 +370,7 @@ admin.post('/domains/:id/disable-rule', async (c) => {
 admin.delete('/domains/:id', async (c) => {
   const d = await getDomain(c.env.DB, intParam(c, 'id'));
   await deleteDomain(c.env, await settingsOf(c), d.id);
+  await rememberRemoved(c.env.DB, { zoneId: d.zone_id, name: d.name });
   await audit(c.env.DB, { userId: currentUser(c).id, action: 'domain.removed', target: d.name, ip: clientIp(c) });
   return c.json({ ok: true });
 });
@@ -427,6 +441,7 @@ admin.get('/cloudflare', async (c) => {
   const token = await verifyToken(cf);
   const zone = await first<{ zone_id: string }>(c.env.DB, 'SELECT zone_id FROM domains LIMIT 1');
   const permissions = token.valid && settings.cfAccountId ? await checkPermissions(cf, settings.cfAccountId, zone?.zone_id ?? null) : [];
+  const accounts = token.valid ? await tokenAccounts(cf, settings, c.env.DB).catch(() => []) : [];
   return c.json({
     connected: token.valid,
     message: token.message,
@@ -434,6 +449,7 @@ admin.get('/cloudflare', async (c) => {
     account: { id: settings.cfAccountId, name: settings.cfAccountName },
     worker: { name: settings.cfWorkerName, subdomain: settings.cfWorkersSubdomain, d1Id: settings.cfD1Id },
     permissions,
+    accounts,
   });
 });
 
@@ -555,6 +571,7 @@ admin.get('/settings', async (c) => {
     spamPolicy: s.spamPolicy,
     remoteImages: s.remoteImages,
     senderLogos: s.senderLogos,
+    autoDomains: s.autoDomains,
     appUrl: s.appUrl,
     version: __APP_VERSION__,
     keyRotation: !!c.env.ENCRYPTION_KEY_PREVIOUS,
