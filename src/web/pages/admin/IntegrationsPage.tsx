@@ -632,6 +632,7 @@ interface StorageInfo {
   accessKeyId: string | null;
   r2Enabled: boolean | null;
   bucketPermission: boolean;
+  buckets?: string[];
   accountId: string | null;
   summary: { d1Bytes: number | null; messages: number };
 }
@@ -705,11 +706,13 @@ function StorageSection() {
                 </a>
                 {s?.r2Enabled === false && <div className="mt-1 text-warning">R2 is not enabled on this account yet.</div>}
               </SetupStep>
-              <SetupStep n={2} title="Create a bucket" done={s?.configured}>
+              <SetupStep n={2} title="Create a bucket" done={s?.configured || s?.buckets?.includes(bucket)}>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Input value={bucket} onChange={(e) => setBucket(e.target.value.toLowerCase())} className="max-w-60 font-mono text-xs" aria-label="Bucket name" />
-                  {s?.bucketPermission ? (
-                    <Button size="sm" className="h-9" loading={busy === 'bucket'} onClick={() => run('bucket', () => post('/admin/storage/bucket', { bucket }), `Bucket ${bucket} is ready`)}>
+                  {s?.buckets?.includes(bucket) ? (
+                    <span className="self-center text-xs text-muted">This bucket exists. Next, its keys.</span>
+                  ) : s?.bucketPermission ? (
+                    <Button size="sm" className="h-9" loading={busy === 'bucket'} onClick={() => run('bucket', () => post('/admin/storage/bucket', { bucket }).then(refresh), `Bucket ${bucket} is ready`)}>
                       Create it for me
                     </Button>
                   ) : (
