@@ -71,7 +71,7 @@ OpenInbox is built for everyday conversations. It is not a bulk or marketing sen
 ## Features
 
 **Mail**
-- Receive on any domain in your Cloudflare account. Email Routing is set up for you.
+- Receive on every domain in your Cloudflare accounts. Email Routing is set up for you, for all of them at once, and new domains are picked up every hour. Domains in another account than the Worker's work through a small relay Worker.
 - Send through Resend, Brevo, Mailjet, Cloudflare Email Sending or any SMTP server. When one provider hits its free limit, mail falls back to another.
 - Threads, All Mail, search (`from:` `has:attachment` `before:`), labels, filters, snooze, scheduled and undo send.
 - Command palette and keyboard shortcuts, dark mode, mobile layout.
@@ -145,7 +145,7 @@ Everything runs inside your own Cloudflare account. There is no OpenInbox server
 
 **1. Click Deploy to Cloudflare**, then **Deploy**. The form asks for nothing else. Keep the default names or change them.
 
-**2. Open the Worker's `workers.dev` address.** The setup page asks for a Cloudflare API token, which OpenInbox uses to set up Email Routing and DNS for you. Click **Create token**: Cloudflare opens with every permission filled in, so you only click **Continue to summary → Create Token** and paste the token back. It is stored encrypted.
+**2. Open the Worker's `workers.dev` address.** The setup page asks for a Cloudflare API token, which OpenInbox uses to set up Email Routing and DNS for you. Click **Create token**: Cloudflare opens with every permission filled in, for all your accounts and domains, so you only click **Continue to summary → Create Token** and paste the token back. It is stored encrypted.
 
 > [!TIP]
 > If the Worker shows no `workers.dev` URL, turn it on in the Worker's **Settings → Domains & Routes**.
@@ -153,7 +153,9 @@ Everything runs inside your own Cloudflare account. There is no OpenInbox server
 > [!IMPORTANT]
 > Connecting the token creates your **recovery key** and shows it **once**. Save it in a password manager. You paste it to finish setup, and it is the only way back into the owner account if you lose your password.
 
-**3. Follow the setup page.** It checks the token's permissions, creates your admin account and connects your domain.
+**3. Follow the setup page.** It checks the token's permissions, creates your admin account and connects your domain. Then it sets up every other domain the token reaches, in all your accounts, and opens the app on `mail.` of your first domain.
+
+A domain whose mail goes to another provider (its MX records point elsewhere) is left for you to add, since taking it over would cut that mail off. A domain whose mail went somewhere before, such as a Gmail forward, keeps arriving: in your mailbox, until you create others. **Admin → Settings → New domains in Cloudflare** turns the hourly check off.
 
 **4. Connect a sending provider** in **Admin → Integrations**.
 
@@ -177,7 +179,7 @@ Everything runs inside your own Cloudflare account. There is no OpenInbox server
 </table>
 
 <details>
-<summary>The token's permissions (filled in for you by <a href="https://dash.cloudflare.com/?to=/:account/api-tokens&amp;permissionGroupKeys=%5B%7B%22key%22%3A%22c8fed203ed3043cba015a93ad1616f1f%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%224755a26eedb94da69e1066d98aa820be%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%223030687196b94b638145a3953da2b699%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%2279b3ec0d10ce4148a8f8bdc0cc5f97f2%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%2228f4b596e7d643029c524985477ae49a%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%229c88f9c5bce24ce7af9a958ba9c504db%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22e086da7e2179491d91ee5f35b3ca210a%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22e4589eb09e63436686cd64252a3aebeb%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%225df633d6b41c42bcaf5b4a62b9d14b64%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22b89a480218d04ceb98b4fe57ca29dc1f%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22c1fde68c7bcc44588cbb6ddbc16d6480%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22bf7481a1826f439697cb59a20b22293e%22%2C%22type%22%3A%22edit%22%7D%5D&amp;name=OpenInbox">this link</a>)</summary>
+<summary>The token's permissions (filled in for you by <a href="https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22zone%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22dns%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22zone_settings%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22email_routing_rule%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_routes%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22analytics%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22email_routing_address%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22email_sending%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_analytics%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22account_settings%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22workers_r2%22%2C%22type%22%3A%22edit%22%7D%5D&amp;name=OpenInbox&amp;accountId=*&amp;zoneId=all">this link</a>)</summary>
 
 | Scope | Permission | Access | |
 | --- | --- | --- | --- |
@@ -193,6 +195,19 @@ Everything runs inside your own Cloudflare account. There is no OpenInbox server
 | Account | Email Sending | Edit | optional: send through Cloudflare |
 | Account | Account Analytics | Read | optional: usage on the dashboard |
 | Account | Workers R2 Storage | Edit | optional: attachments bucket |
+
+</details>
+
+<details>
+<summary>Domains in another Cloudflare account</summary>
+
+Email Routing hands a domain's mail only to a Worker in that domain's own Cloudflare account. For a domain in another account, OpenInbox installs a small relay Worker there (`openinbox-relay`) that passes each message to OpenInbox over HTTPS. Mail, filters, spam handling and auto-replies work as for any other domain.
+
+- **The token must reach the other account.** The setup link creates a user token for all your accounts and zones, so this needs nothing more. An account token sees only its own account. Then **Admin → Domains → Add a domain** lists the other account's zones with the account's name.
+- **The relay calls the app's address**: the **App address** in **Admin → Settings**, or the one setup ran from. Changing it there updates the relays. If one still calls the old address, the domain's checks say so and **Repair** fixes it.
+- **Forwarding** from such a domain is done by the relay in that account, so a forwarding address must be a verified destination in that account too.
+- The web app can't open on `mail.` of such a domain: use a domain in the Worker's own account for that.
+- Removing the last domain of an account removes its relay.
 
 </details>
 

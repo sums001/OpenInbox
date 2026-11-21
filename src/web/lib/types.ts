@@ -131,6 +131,8 @@ export interface DomainInfo {
   catchAllMailboxId: number | null;
   providerId: number | null;
   appHostname: string | null;
+  // In another Cloudflare account: mail arrives through the relay Worker there.
+  relayed: boolean;
   logoUpdatedAt: number | null;
   addresses: number;
   health: { items: HealthItem[]; conflicts: { address: string; action: string }[]; checkedAt: number } | null;
@@ -149,6 +151,8 @@ export interface SenderLogo {
 export interface ZoneInspection {
   zoneId: string;
   name: string;
+  account: { id: string; name: string } | null;
+  relayed: boolean;
   mx: { host: string; priority?: number }[];
   mxState: 'none' | 'cloudflare' | 'other';
   routing: { enabled: boolean; status: string } | null;
