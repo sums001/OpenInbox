@@ -171,7 +171,14 @@ describe('first-run setup', () => {
     const c = new Client();
     await c.init();
     const status = await c.get('/api/setup/status');
-    expect(status.zones.map((z: { name: string }) => z.name)).toEqual(['example.com', 'workspace.dev']);
+    // Every account's domains are listed, the other account's with its name; the first domain
+    // still has to be in the Worker's account.
+    expect(status.zones.map((z: { name: string; account: string | null }) => [z.name, z.account])).toEqual([
+      ['example.com', null],
+      ['workspace.dev', null],
+      ['shop.test', 'Shop Account'],
+    ]);
+    expect(status.checks.zones.message).toBe('2 domains found, and 1 in your other accounts.');
     const claim = { zoneId: SHOP_ZONE, localPart: 'admin', displayName: 'Admin', password: 'correct horse battery', setupKey: ENCRYPTION_KEY };
     const res = await c.request('POST', '/api/setup/claim', claim);
     expect(res.status).toBe(400);

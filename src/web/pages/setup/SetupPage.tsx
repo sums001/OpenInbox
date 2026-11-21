@@ -33,8 +33,9 @@ interface SetupStatus {
     zones: Check & { count: number };
   };
   permissions: PermissionCheck[];
-  // usable: whether the token can manage the zone (null: not checked).
-  zones: { id: string; name: string; status: string; usable: boolean | null }[];
+  // usable: whether the token can manage the zone (null: not checked). account: set for a zone in
+  // another account than the Worker's (set up through a relay, after the first domain).
+  zones: { id: string; name: string; status: string; usable: boolean | null; account: string | null }[];
 }
 
 type Stage = 'checks' | 'admin' | 'domain' | 'others' | 'done';
@@ -117,7 +118,7 @@ export function SetupPage() {
         )}
         {stage === 'admin' && status.data && (
           <AdminStage
-            zones={status.data.zones.filter((z) => z.usable !== false)}
+            zones={status.data.zones.filter((z) => z.usable !== false && !z.account)}
             keyState={status.data.checks.encryptionKey.state}
             onBack={() => setStage('checks')}
             onClaimed={(c) => {
@@ -443,9 +444,12 @@ function ChecksStage({
                       {status!.zones
                         .filter((z) => z.usable !== false)
                         .map((z) => (
-                          <Badge key={z.id}>{z.name}</Badge>
+                          <Badge key={z.id}>{z.account ? `${z.name} · ${z.account}` : z.name}</Badge>
                         ))}
                     </div>
+                  )}
+                  {c!.zones.ok && status!.zones.some((z) => z.account) && (
+                    <div className="mt-1.5 text-xs text-muted">Domains in your other accounts are set up after your first domain, through a small relay Worker in their account.</div>
                   )}
                   <NotCovered zones={status!.zones.filter((z) => z.usable === false).map((z) => z.name)} />
                   {!c!.zones.ok && c!.zones.count === 0 && (
