@@ -80,6 +80,24 @@ describe('Inbox API', () => {
     expect((await call(key, 'GET', '/api/v1/me')).status).toBe(401);
   });
 
+  it('can be called from a browser app on another site, keys only', async () => {
+    const preflight = await worker.fetch(
+      new Request(ORIGIN + '/api/v1/threads', { method: 'OPTIONS', headers: { Origin: 'https://app.example', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization' } }),
+      env,
+      createExecutionContext(),
+    );
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect(preflight.headers.get('Access-Control-Allow-Headers')).toContain('Authorization');
+    // Errors carry the headers too, so the app can read them.
+    const denied = await worker.fetch(new Request(ORIGIN + '/api/v1/me', { headers: { Origin: 'https://app.example', Authorization: 'Bearer oik_nope' } }), env, createExecutionContext());
+    expect(denied.status).toBe(401);
+    expect(denied.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect((await worker.fetch(new Request(ORIGIN + '/api/health'), env, createExecutionContext())).headers.get('Access-Control-Allow-Origin')).toBe('*');
+    // The web app's own endpoints, which use the session cookie, stay same-origin.
+    expect((await worker.fetch(new Request(ORIGIN + '/api/auth/session'), env, createExecutionContext())).headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
+
   it('enforces scopes, mailbox limits and bad keys', async () => {
     expect((await call(null, 'GET', '/api/v1/me')).status).toBe(401);
     expect((await call('oik_notarealkeynotarealkey00', 'GET', '/api/v1/me')).status).toBe(401);
