@@ -27,6 +27,7 @@ import { counterStmt, dailyStatStmt } from './stats';
 import { bumpState } from './mailboxes';
 import { mergeParticipants } from './inbound';
 import type { SessionUser } from '../types';
+import { nextSeqStmts } from '../db/sequence';
 
 export interface ComposeInput {
   mailboxId: number;
@@ -499,6 +500,7 @@ async function recordSent(
         "UPDATE messages SET status = 'sent', provider_id = ?, provider_message_id = ?, sent_at = ?, attempts = attempts + 1, error = NULL, send_at = NULL, raw_key = ?, raw_store = ?, size = ? WHERE id = ?",
       )
       .bind(provider.id, providerMessageId, now, rawStore ? rawKey : null, rawStore, bytes.byteLength, m.id),
+    ...nextSeqStmts(db, m.id),
   ];
   const thread = await first<{ participants: string }>(db, 'SELECT participants FROM threads WHERE id = ?', m.thread_id);
   const participants = mergeParticipants(parseJson<Address[]>(thread?.participants, []), { name: m.from_name, address: m.from_addr });

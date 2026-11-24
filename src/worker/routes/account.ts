@@ -2,7 +2,9 @@
 import { Hono } from 'hono';
 import type { AppBindings } from '../types';
 import { body } from '../lib/validate';
-import { passwordChangeSchema, profileSchema, totpSchema, trustedSenderSchema } from '../../shared/schemas';
+import { apiKeySchema, pairDecisionSchema, passwordChangeSchema, profileSchema, totpSchema, trustedSenderSchema } from '../../shared/schemas';
+import { createPairing, decidePairing, listDevices, pairingStatus } from '../services/devices';
+import { intParam } from '../lib/validate';
 import { all, first, run } from '../db/db';
 import { currentUser, clientIp } from '../auth/middleware';
 import { verifyPassword } from '../lib/password';
@@ -11,6 +13,10 @@ import { hashRecoveryCode, matchTotpStep, newRecoveryCodes, newTotpSecret, otpau
 import { badRequest, HttpError, notFound } from '../lib/errors';
 import { changePassword, type UserRow } from '../services/users';
 import { audit } from '../services/audit';
+import { accessibleMailboxes } from '../auth/access';
+import { newApiKey } from '../auth/api-key';
+import { newId } from '../lib/ids';
+import { parseJson } from '../lib/json';
 
 export const account = new Hono<AppBindings>();
 
@@ -114,4 +120,103 @@ account.delete('/trusted-senders/:pattern', async (c) => {
   const user = currentUser(c);
   await run(c.env.DB, 'DELETE FROM trusted_senders WHERE user_id = ? AND pattern = ?', user.id, decodeURIComponent(c.req.param('pattern')));
   return c.json({ ok: true });
+});
+
+// Inbox API keys. The key is shown once, when created; only its hash is stored.
+const MAX_API_KEYS = 20;
+
+account.get('/api-keys', async (c) => {
+  const user = currentUser(c);
+  const rows = await all<{ id: number; name: string; prefix: string; scopes: string; mailbox_ids: string | null; created_at: number; expires_at: number | null; last_used_at: number | null; last_used_ip: string | null }>(
+    c.env.DB,
+    "SELECT id, name, prefix, scopes, mailbox_ids, created_at, expires_at, last_used_at, last_used_ip FROM api_keys WHERE user_id = ? AND kind = 'key' ORDER BY created_at DESC",
+    user.id,
+  );
+  return c.json(
+    rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      prefix: r.prefix,
+      scopes: parseJson<string[]>(r.scopes, []),
+      mailboxIds: parseJson<number[] | null>(r.mailbox_ids, null),
+      createdAt: r.created_at,
+      expiresAt: r.expires_at,
+      lastUsedAt: r.last_used_at,
+      lastUsedIp: r.last_used_ip,
+    })),
+  );
+});
+
+account.post('/api-keys', async (c) => {
+  const user = currentUser(c);
+  const input = await body(c, apiKeySchema);
+  const row = await first<UserRow>(c.env.DB, 'SELECT * FROM users WHERE id = ?', user.id);
+  if (!row || !(await verifyPassword(input.password, row.password_hash))) throw new HttpError(400, 'wrong_password', 'Your password is not correct.');
+  const count = await first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM api_keys WHERE user_id = ? AND kind = 'key'", user.id);
+  if ((count?.n ?? 0) >= MAX_API_KEYS) throw badRequest(`You can have at most ${MAX_API_KEYS} API keys. Delete one you no longer use.`);
+  let mailboxIds: number[] | null = null;
+  if (input.mailboxIds?.length) {
+    const own = (await accessibleMailboxes(c.env.DB, user)).map((a) => a.mailboxId);
+    mailboxIds = [...new Set(input.mailboxIds)];
+    if (mailboxIds.some((id) => !own.includes(id))) throw badRequest('You can only limit a key to mailboxes you are a member of.');
+  }
+  const scopes = [...new Set(input.scopes)];
+  const { key, prefix, hash } = await newApiKey();
+  const id = newId();
+  const now = Date.now();
+  const expiresAt = input.expiresInDays ? now + input.expiresInDays * 86_400_000 : null;
+  await run(
+    c.env.DB,
+    'INSERT INTO api_keys (id, user_id, name, prefix, key_hash, scopes, mailbox_ids, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    id,
+    user.id,
+    input.name,
+    prefix,
+    hash,
+    JSON.stringify(scopes),
+    mailboxIds ? JSON.stringify(mailboxIds) : null,
+    now,
+    expiresAt,
+  );
+  await audit(c.env.DB, { userId: user.id, action: 'account.api_key_created', target: prefix, details: { name: input.name, scopes, mailboxIds }, ip: clientIp(c) });
+  return c.json({ id, key, name: input.name, prefix, scopes, mailboxIds, createdAt: now, expiresAt, lastUsedAt: null, lastUsedIp: null });
+});
+
+account.delete('/api-keys/:id', async (c) => {
+  const user = currentUser(c);
+  const id = Number(c.req.param('id'));
+  const key = await first<{ prefix: string }>(c.env.DB, "SELECT prefix FROM api_keys WHERE id = ? AND user_id = ? AND kind = 'key'", id, user.id);
+  if (!key) throw notFound('API key not found.');
+  await run(c.env.DB, 'DELETE FROM api_keys WHERE id = ?', id);
+  await audit(c.env.DB, { userId: user.id, action: 'account.api_key_deleted', target: key.prefix, ip: clientIp(c) });
+  return c.json({ ok: true });
+});
+
+// Phones (the OpenInbox mobile app), connected by QR code: services/devices.ts.
+
+account.get('/devices', async (c) => c.json(await listDevices(c.env.DB, currentUser(c).id)));
+
+account.delete('/devices/:id', async (c) => {
+  const user = currentUser(c);
+  const device = await first<{ name: string }>(c.env.DB, "SELECT name FROM api_keys WHERE id = ? AND user_id = ? AND kind = 'device'", intParam(c, 'id'), user.id);
+  if (!device) throw notFound('Phone not found.');
+  await run(c.env.DB, 'DELETE FROM api_keys WHERE id = ?', intParam(c, 'id'));
+  await audit(c.env.DB, { userId: user.id, action: 'account.device_removed', target: device.name, ip: clientIp(c) });
+  return c.json({ ok: true });
+});
+
+// The QR code carries the address the phone connects to: the App address, or this one.
+account.post('/devices/pairing', async (c) => {
+  const server = c.get('settings').appUrl ?? new URL(c.req.url).origin;
+  return c.json(await createPairing(c.env, currentUser(c).id, server));
+});
+
+account.get('/devices/pairing/:id', async (c) => c.json(await pairingStatus(c.env.DB, currentUser(c).id, intParam(c, 'id'))));
+
+account.post('/devices/pairing/:id', async (c) => {
+  const user = currentUser(c);
+  const { allow } = await body(c, pairDecisionSchema);
+  const r = await decidePairing(c.env, user.id, intParam(c, 'id'), allow);
+  await audit(c.env.DB, { userId: user.id, action: allow ? 'account.device_connected' : 'account.device_denied', target: r.name, ip: clientIp(c) });
+  return c.json(r);
 });

@@ -37,7 +37,15 @@ export interface FakeState {
   customDomains: { id: string; hostname: string; service: string; zone_id: string }[];
   r2Enabled: boolean;
   buckets: string[];
-  resend: { domains: { id: string; name: string; status: string; records: Record<string, unknown>[] }[]; emails: Record<string, unknown>[]; failNext: number; webhooks: string[] };
+  resend: {
+    domains: { id: string; name: string; status: string; records: Record<string, unknown>[] }[];
+    emails: Record<string, unknown>[];
+    failNext: number;
+    // GET /emails/:id fails with a 500 this many times.
+    failGet: number;
+    webhooks: string[];
+    webhookEvents: Record<string, string[]>;
+  };
   brevo: { domains: Record<string, { id: number; authenticated: boolean }>; emails: Record<string, unknown>[]; credits: number };
   mailjet: { dns: Record<string, { id: number }>; emails: Record<string, unknown>[] };
   cfSending: { entitled: boolean; failNext: number; emails: Record<string, unknown>[] };
@@ -74,7 +82,7 @@ export function createFakeState(): FakeState {
     customDomains: [],
     r2Enabled: false,
     buckets: [],
-    resend: { domains: [], emails: [], failNext: 0, webhooks: [] },
+    resend: { domains: [], emails: [], failNext: 0, failGet: 0, webhooks: [], webhookEvents: {} },
     brevo: { domains: {}, emails: [], credits: 300 },
     mailjet: { dns: {}, emails: [] },
     cfSending: { entitled: true, failNext: 0, emails: [] },
@@ -318,7 +326,12 @@ function graphql(body: { query: string }): Response {
 }
 
 function resend(state: FakeState, req: Request, path: string, body: any): Response {
-  if (!/^Bearer re_/.test(req.headers.get('authorization') ?? '')) return json({ statusCode: 401, name: 'validation_error', message: 'API key is invalid' }, 401);
+  const auth = req.headers.get('authorization') ?? '';
+  if (!/^Bearer re_/.test(auth)) return json({ statusCode: 401, name: 'validation_error', message: 'API key is invalid' }, 401);
+  // A sending-only key: anything but sending is refused.
+  if (auth.startsWith('Bearer re_send_only') && !(path === '/emails' && req.method === 'POST')) {
+    return json({ statusCode: 401, name: 'restricted_api_key', message: 'This API key is restricted to only send emails' }, 401);
+  }
   let r: RegExpExecArray | null;
   if (path === '/domains' && req.method === 'GET') return json({ data: state.resend.domains.map(({ records: _r, ...d }) => d) });
   if (path === '/domains' && req.method === 'POST') {
@@ -361,7 +374,17 @@ function resend(state: FakeState, req: Request, path: string, body: any): Respon
   if (path === '/webhooks' && req.method === 'POST') {
     const id = `wh_${state.seq++}`;
     state.resend.webhooks.push(id);
+    state.resend.webhookEvents[id] = body.events;
     return json({ object: 'webhook', id, signing_secret: 'whsec_dGVzdC1zZWNyZXQtZm9yLXdlYmhvb2tz' });
+  }
+  if ((r = /^\/emails\/([^/]+)$/.exec(path)) && req.method === 'GET') {
+    if (state.resend.failGet > 0) {
+      state.resend.failGet--;
+      return json({ statusCode: 500, name: 'internal_server_error', message: 'Temporary failure' }, 500);
+    }
+    const e = state.resend.emails.find((x) => x.id === r![1]);
+    if (!e) return json({ statusCode: 404, name: 'not_found', message: 'Email not found' }, 404);
+    return json({ object: 'email', cc: [], bcc: [], reply_to: [], text: null, html: null, last_event: 'sent', ...e });
   }
   const hook = path.match(/^\/webhooks\/([^/]+)$/);
   if (hook && req.method === 'DELETE') {
