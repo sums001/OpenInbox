@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router';
 import { zipSync } from 'fflate';
-import { CalendarClock, Download, FileUp, Funnel, PenLine, Plus, Tag, Trash, Forward } from 'lucide-react';
-import { del, get, patch, post, put, api, errorText } from '../../lib/api';
+import { CalendarClock, Download, FileUp, Funnel, PenLine, Plus, Tag, Trash, Forward, Archive } from 'lucide-react';
+import { del, get, patch, post, put, api, ApiError, errorText } from '../../lib/api';
 import { useAction, useInvalidate } from '../../lib/hooks';
 import { cleanSignature } from '../../lib/sanitize';
 import { cn, downloadBlob } from '../../lib/utils';
+import { streamMbox, formatMboxEntry, parseGmailLabels } from '../../lib/mbox';
 import { LABEL_COLORS } from '../../../shared/constants';
 import type { Label, Mailbox } from '../../lib/types';
 import { Button } from '../../components/ui/button';
@@ -39,7 +40,7 @@ export const MAIL_SECTIONS: { id: MailSection; label: string; description: strin
   { id: 'forwarding', label: 'Forwarding', description: 'Keep a copy here and forward every message to another address. Forwarding goes through Cloudflare, not your sending quota.' },
   { id: 'labels', label: 'Labels', description: 'Organize conversations. Filters can apply labels automatically.' },
   { id: 'filters', label: 'Filters', description: 'Rules applied to new mail as it arrives, in order.' },
-  { id: 'import-export', label: 'Import & export', description: 'Bring mail from another account as .eml files, or download everything in this inbox as a zip of .eml files.' },
+  { id: 'import-export', label: 'Import & export', description: 'Import mail from Google Takeout (.mbox) or .eml files, or export your inbox as .mbox or .zip.' },
 ];
 
 // One mail section for one inbox. The inbox comes from ?inbox= so the choice survives switching
@@ -378,74 +379,276 @@ function FilterDialog({ box, filter, onClose, onSaved }: { box: Mailbox; filter:
   );
 }
 
+const MAX_IMPORT_BYTES = 25 * 1024 * 1024;
+
+function buildImportParams(folder: string, customLabels: string[], isStarred: boolean): URLSearchParams {
+  const params = new URLSearchParams({ folder });
+  for (const label of customLabels) {
+    params.append('label', label);
+  }
+  if (isStarred) {
+    params.set('starred', '1');
+  }
+  return params;
+}
+
 function ImportExport({ box }: { box: Mailbox }) {
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
   const invalidate = useInvalidate();
+
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
+
+  const startController = () => {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    return ctrl;
+  };
 
   const importFiles = async (files: FileList) => {
     setError('');
+    setIsProcessing(true);
+    const ctrl = startController();
     let done = 0;
     let dupes = 0;
-    for (const file of Array.from(files)) {
-      setProgress(`Importing ${done + 1} of ${files.length}…`);
-      try {
-        const r = await api<{ status: string }>(`/mailboxes/${box.id}/import`, { raw: file, headers: { 'Content-Type': 'message/rfc822' } });
-        if (r.status === 'duplicate') dupes++;
-      } catch (e) {
-        setError(`${file.name}: ${errorText(e)}`);
+    let errors = 0;
+    let lastError = '';
+
+    try {
+      for (const file of Array.from(files)) {
+        if (ctrl.signal.aborted) break;
+        const isMbox = file.name.toLowerCase().endsWith('.mbox') || file.type === 'application/mbox';
+        if (isMbox) {
+          // Stream-parse mbox archive in constant browser memory
+          for await (const msg of streamMbox(file, 2 * 1024 * 1024, (read, total) => {
+            if (ctrl.signal.aborted) return;
+            const pct = total > 0 ? Math.round((read / total) * 100) : 100;
+            setProgress(`Scanning ${file.name} (${pct}%) — ${done} imported…`);
+          })) {
+            if (ctrl.signal.aborted) break;
+            if (msg.oversized || msg.bytes.byteLength > MAX_IMPORT_BYTES) {
+              errors++;
+              lastError = `${file.name} #${msg.index}: Files over 25 MB cannot be imported.`;
+              continue;
+            }
+            try {
+              const folderLabel = msg.targetFolder === 'inbox' ? 'Inbox' : msg.targetFolder === 'trash' ? 'Trash' : msg.targetFolder === 'spam' ? 'Spam' : 'Archive';
+              setProgress(`Importing message ${msg.index} (${folderLabel}) from ${file.name}…`);
+
+              const params = buildImportParams(msg.targetFolder, msg.customLabels, msg.isStarred);
+              const r = await api<{ status: string }>(`/mailboxes/${box.id}/import?${params}`, {
+                raw: new Blob([msg.bytes as BlobPart], { type: 'message/rfc822' }),
+                headers: { 'Content-Type': 'message/rfc822' },
+                signal: ctrl.signal,
+              });
+              if (r.status === 'duplicate') dupes++;
+              done++;
+            } catch (e) {
+              if (ctrl.signal.aborted) break;
+              if (e instanceof ApiError && (e.status === 401 || e.status === 403)) throw e;
+              errors++;
+              lastError = `${file.name} #${msg.index}: ${errorText(e)}`;
+            }
+          }
+        } else {
+          // Standard single .eml file
+          if (file.size > MAX_IMPORT_BYTES) {
+            errors++;
+            lastError = `${file.name}: Files over 25 MB cannot be imported.`;
+            continue;
+          }
+          setProgress(`Importing ${done + 1} of ${files.length}…`);
+          try {
+            const headerSlice = await file.slice(0, 65536).arrayBuffer();
+            const labelsInfo = parseGmailLabels(new Uint8Array(headerSlice));
+            const params = buildImportParams(labelsInfo.targetFolder, labelsInfo.customLabels, labelsInfo.isStarred);
+
+            const r = await api<{ status: string }>(`/mailboxes/${box.id}/import?${params}`, {
+              raw: file,
+              headers: { 'Content-Type': 'message/rfc822' },
+              signal: ctrl.signal,
+            });
+            if (r.status === 'duplicate') dupes++;
+            done++;
+          } catch (e) {
+            if (ctrl.signal.aborted) break;
+            if (e instanceof ApiError && (e.status === 401 || e.status === 403)) throw e;
+            errors++;
+            lastError = `${file.name}: ${errorText(e)}`;
+          }
+        }
       }
-      done++;
+
+      if (!ctrl.signal.aborted) {
+        if (lastError) setError(errors > 1 ? `${lastError} (${errors} failed total)` : lastError);
+        const imported = done - dupes;
+        setProgress(
+          `Import complete: ${imported} message${imported === 1 ? '' : 's'} imported` +
+            (dupes ? ` (${dupes} duplicates skipped)` : '') +
+            (errors ? `, ${errors} failed.` : '.'),
+        );
+        invalidate(['threads'], ['mailboxes']);
+      }
+    } catch (e) {
+      if (!ctrl.signal.aborted) setError(errorText(e));
+    } finally {
+      if (abortRef.current === ctrl) setIsProcessing(false);
     }
-    setProgress(`Imported ${done - dupes} message${done - dupes === 1 ? '' : 's'}${dupes ? ` (${dupes} already here)` : ''} into Archive.`);
-    invalidate(['threads'], ['mailboxes']);
   };
 
-  const exportAll = async () => {
-    setError('');
-    const files: Record<string, Uint8Array> = {};
+  type ExportMessageMeta = { id: number; subject: string; sent_at: number };
+
+  const collectExport = async (
+    label: string,
+    onMessage: (meta: ExportMessageMeta, raw: Uint8Array) => void,
+    signal: AbortSignal,
+  ): Promise<{ exported: number; failed: number }> => {
     let after = 0;
-    let count = 0;
+    let exported = 0;
+    let failed = 0;
+
+    for (;;) {
+      if (signal.aborted) break;
+      const page = await get<{ messages: ExportMessageMeta[]; next: number | null }>(
+        `/mailboxes/${box.id}/export?after=${after}`,
+        signal,
+      );
+      for (const m of page.messages) {
+        if (signal.aborted) break;
+        setProgress(`${label} message ${exported + failed + 1}…`);
+        const res = await fetch(`/api/messages/${m.id}/raw`, { credentials: 'same-origin', signal });
+        if (res.status === 401 || res.status === 403) {
+          throw new ApiError(res.status, 'auth', `Export stopped (${res.status}). Please sign in again.`);
+        }
+        if (!res.ok) {
+          failed++;
+          continue;
+        }
+        const raw = new Uint8Array(await res.arrayBuffer());
+        onMessage(m, raw);
+        exported++;
+      }
+      if (!page.next) break;
+      after = page.next;
+    }
+    return { exported, failed };
+  };
+
+  const safeAddress = box.address.replace(/[^\w.@+-]+/g, '_');
+
+  const exportMbox = async () => {
+    setError('');
+    setIsProcessing(true);
+    const ctrl = startController();
+    const mboxParts: Uint8Array[] = [];
+
     try {
-      for (;;) {
-        const page = await get<{ messages: { id: number; subject: string; sent_at: number }[]; next: number | null }>(`/mailboxes/${box.id}/export?after=${after}`);
-        for (const m of page.messages) {
-          setProgress(`Downloading message ${++count}…`);
-          const res = await fetch(`/api/messages/${m.id}/raw`, { credentials: 'same-origin' });
-          if (!res.ok) continue;
+      const { exported, failed } = await collectExport(
+        'Exporting',
+        (m, raw) => {
+          mboxParts.push(formatMboxEntry(raw, new Date(m.sent_at), box.address));
+        },
+        ctrl.signal,
+      );
+      if (ctrl.signal.aborted) return;
+
+      setProgress('Generating .mbox file…');
+      const blob = new Blob(mboxParts as BlobPart[], { type: 'application/mbox' });
+      downloadBlob(blob, `${safeAddress}-${new Date().toISOString().slice(0, 10)}.mbox`);
+      setProgress(`Exported ${exported} message${exported === 1 ? '' : 's'} to .mbox${failed ? ` (${failed} failed).` : '.'}`);
+      if (failed > 0) setError(`${failed} message${failed === 1 ? '' : 's'} could not be downloaded and were omitted from the export.`);
+    } catch (e) {
+      if (!ctrl.signal.aborted) setError(errorText(e));
+    } finally {
+      if (abortRef.current === ctrl) setIsProcessing(false);
+    }
+  };
+
+  const exportZip = async () => {
+    setError('');
+    setIsProcessing(true);
+    const ctrl = startController();
+    const files: Record<string, Uint8Array> = {};
+
+    try {
+      const { exported, failed } = await collectExport(
+        'Downloading',
+        (m, raw) => {
           const date = new Date(m.sent_at).toISOString().slice(0, 10);
           const name = `${date}-${m.id}-${(m.subject || 'message').replace(/[^\w -]+/g, '').trim().slice(0, 50)}.eml`;
-          files[name] = new Uint8Array(await res.arrayBuffer());
-        }
-        if (!page.next) break;
-        after = page.next;
-      }
+          files[name] = raw;
+        },
+        ctrl.signal,
+      );
+      if (ctrl.signal.aborted) return;
+
       setProgress('Creating zip…');
       const zip = zipSync(files, { level: 6 });
-      downloadBlob(new Blob([zip as BlobPart], { type: 'application/zip' }), `${box.address}-${new Date().toISOString().slice(0, 10)}.zip`);
-      setProgress(`Exported ${count} messages.`);
+      downloadBlob(new Blob([zip as BlobPart], { type: 'application/zip' }), `${safeAddress}-${new Date().toISOString().slice(0, 10)}.zip`);
+      setProgress(`Exported ${exported} message${exported === 1 ? '' : 's'} to .zip${failed ? ` (${failed} failed).` : '.'}`);
+      if (failed > 0) setError(`${failed} message${failed === 1 ? '' : 's'} could not be downloaded and were omitted from the export.`);
     } catch (e) {
-      setError(errorText(e));
-      setProgress(null);
+      if (!ctrl.signal.aborted) setError(errorText(e));
+    } finally {
+      if (abortRef.current === ctrl) setIsProcessing(false);
     }
   };
 
   return (
     <Card>
-      <CardHeader icon={<Download className="h-5 w-5" />} title="Your mail as .eml files" description="Imported messages go to Archive." />
+      <CardHeader
+        icon={<Download className="h-5 w-5" />}
+        title="Mail Import & Export"
+        description="Transfer your mail using Google Takeout (.mbox) or standard .eml files."
+      />
       <div className="space-y-4 p-5">
         {error && <Alert tone="danger">{error}</Alert>}
         {progress && <Alert tone="neutral">{progress}</Alert>}
         <div className="flex flex-wrap gap-2">
-          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-surface-2 px-3.5 py-2 text-sm font-medium hover:bg-surface-3">
-            <FileUp className="h-4 w-4" /> Import .eml files
-            <input type="file" accept=".eml,message/rfc822" multiple hidden onChange={(e) => e.target.files && importFiles(e.target.files)} />
+          <label
+            className={cn(
+              'inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-surface-2 px-3.5 py-2 text-sm font-medium hover:bg-surface-3 transition',
+              isProcessing && 'pointer-events-none opacity-50'
+            )}
+          >
+            <FileUp className="h-4 w-4" /> Import .mbox or .eml
+            <input
+              type="file"
+              accept=".mbox,.eml,message/rfc822,application/mbox"
+              multiple
+              hidden
+              disabled={isProcessing}
+              onChange={(e) => {
+                if (e.target.files?.length) {
+                  importFiles(e.target.files);
+                  e.target.value = '';
+                }
+              }}
+            />
           </label>
-          <Button icon={<Download className="h-4 w-4" />} onClick={exportAll}>
-            Export as zip
+          <Button
+            icon={<Archive className="h-4 w-4" />}
+            onClick={exportMbox}
+            disabled={isProcessing}
+          >
+            Export as .mbox (Gmail / Thunderbird)
+          </Button>
+          <Button
+            icon={<Download className="h-4 w-4" />}
+            onClick={exportZip}
+            disabled={isProcessing}
+          >
+            Export as .zip
           </Button>
         </div>
-        <p className="text-xs text-muted">The export runs in your browser, one message at a time, so it works on the free plan for any size of inbox.</p>
+        <p className="text-xs text-muted">
+          All extraction runs locally in your browser chunk-by-chunk with low memory usage, allowing multi-gigabyte Google Takeout files to be imported safely into your free Cloudflare Worker.
+        </p>
       </div>
     </Card>
   );
