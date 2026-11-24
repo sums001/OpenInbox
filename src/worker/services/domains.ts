@@ -19,12 +19,14 @@ import {
 import { applyActions, listRecords, planRecords, type CfDnsRecord } from '../cloudflare/dns';
 import { isSpf, spfIncludes, spfLookupCount, unquoteTxt } from '../cloudflare/spf';
 import { attachCustomDomain } from '../cloudflare/workers';
+import { installRelay, relayState, relayWorkerName, removeRelay } from './relay';
 import { badRequest, conflict, HttpError, notFound } from '../lib/errors';
 import { parseJson } from '../lib/json';
 import { newId } from '../lib/ids';
 
 export const DOMAIN_STEPS = [
   { id: 'routing', label: 'Turn on Email Routing' },
+  { id: 'relay', label: "Install the relay Worker in the domain's Cloudflare account" },
   { id: 'catchall', label: 'Route all mail for the domain to OpenInbox' },
   { id: 'dmarc', label: 'Add a DMARC record' },
   { id: 'verify', label: 'Check that mail can arrive' },
@@ -54,7 +56,20 @@ export interface DomainRow {
   health: string;
   health_checked_at: number | null;
   app_hostname: string | null;
+  account_id: string | null; // the zone's Cloudflare account, when it is not OpenInbox's own
   created_at: number;
+}
+
+// Only a domain in another Cloudflare account needs the relay step.
+export function stepsFor(d: Pick<DomainRow, 'account_id'>) {
+  return DOMAIN_STEPS.filter((s) => s.id !== 'relay' || !!d.account_id);
+}
+
+// The Worker the domain's catch-all hands mail to: OpenInbox itself, or the relay in the
+// domain's own account.
+export function mailWorker(settings: Pick<AppSettings, 'cfWorkerName'>, d: Pick<DomainRow, 'account_id'>): string | null {
+  if (!settings.cfWorkerName) return null;
+  return d.account_id ? relayWorkerName(settings) : settings.cfWorkerName;
 }
 
 const CF_MX = /\.mx\.cloudflare\.net\.?$/i;
@@ -81,6 +96,9 @@ export function requireWorker(settings: AppSettings): { accountId: string; worke
 export interface MxInspection {
   zoneId: string;
   name: string;
+  account: { id: string; name: string } | null;
+  // In another Cloudflare account than OpenInbox's Worker: mail arrives through a relay.
+  relayed: boolean;
   mx: { host: string; priority?: number }[];
   mxState: 'none' | 'cloudflare' | 'other';
   routing: { enabled: boolean; status: string } | null;
@@ -89,8 +107,10 @@ export interface MxInspection {
 }
 
 // What a zone looks like before OpenInbox takes over its mail.
-export async function inspectZone(cf: Cloudflare, zoneId: string, workerName: string | null): Promise<MxInspection> {
-  const zone = await cf.get<{ id: string; name: string }>(`/zones/${zoneId}`);
+export async function inspectZone(cf: Cloudflare, zoneId: string, settings: Pick<AppSettings, 'cfWorkerName' | 'cfAccountId'>): Promise<MxInspection> {
+  const zone = await cf.get<{ id: string; name: string; account?: { id: string; name: string } }>(`/zones/${zoneId}`);
+  const relayed = !!(zone.account?.id && settings.cfAccountId && zone.account.id !== settings.cfAccountId);
+  const workerName = mailWorker(settings, { account_id: relayed ? zone.account!.id : null });
   const records = await cf.paginate<CfDnsRecord>(`/zones/${zoneId}/dns_records?type=MX`, 100, 3);
   const mx = records
     .filter((r) => r.name.toLowerCase() === zone.name.toLowerCase())
@@ -108,10 +128,11 @@ export async function inspectZone(cf: Cloudflare, zoneId: string, workerName: st
   } catch {
     // Email Routing was never set up on this zone.
   }
-  return { zoneId, name: zone.name, mx, mxState, routing, catchAll, conflicts };
+  return { zoneId, name: zone.name, account: zone.account ?? null, relayed, mx, mxState, routing, catchAll, conflicts };
 }
 
-export async function createDomain(db: D1Database, zone: { id: string; name: string }, replaceMx: boolean): Promise<DomainRow> {
+// accountId: the zone's account, when it is not OpenInbox's own (see stepsFor).
+export async function createDomain(db: D1Database, zone: { id: string; name: string }, replaceMx: boolean, accountId: string | null = null): Promise<DomainRow> {
   const existing = await first<DomainRow>(db, 'SELECT * FROM domains WHERE name = ?', zone.name);
   if (existing) {
     if (replaceMx) {
@@ -125,12 +146,13 @@ export async function createDomain(db: D1Database, zone: { id: string; name: str
   const state: SetupState = { replaceMx, steps: {} };
   await run(
     db,
-    'INSERT INTO domains (id, name, zone_id, status, setup_state, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    'INSERT INTO domains (id, name, zone_id, status, setup_state, account_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
     id,
     zone.name.toLowerCase(),
     zone.id,
     'pending',
     JSON.stringify(state),
+    accountId,
     Date.now(),
   );
   return getDomain(db, id);
@@ -138,15 +160,17 @@ export async function createDomain(db: D1Database, zone: { id: string; name: str
 
 export function domainStatePayload(d: DomainRow) {
   const state = parseJson<SetupState>(d.setup_state, { steps: {} });
+  const steps = stepsFor(d);
   return {
-    steps: DOMAIN_STEPS.map((s) => ({ id: s.id, label: s.label, ...(state.steps[s.id] ?? { status: 'pending' as const }) })),
-    done: DOMAIN_STEPS.every((s) => state.steps[s.id]?.status === 'done' || state.steps[s.id]?.status === 'skipped'),
+    steps: steps.map((s) => ({ id: s.id, label: s.label, ...(state.steps[s.id] ?? { status: 'pending' as const }) })),
+    done: steps.every((s) => state.steps[s.id]?.status === 'done' || state.steps[s.id]?.status === 'skipped'),
   };
 }
 
 // The token permission each step needs, named in the error when Cloudflare refuses it.
 const STEP_PERMISSION: Record<StepId, string> = {
   routing: 'Zone → Zone Settings → Edit',
+  relay: "Account → Workers Scripts → Edit on the domain's account",
   catchall: 'Zone → Email Routing Rules → Edit',
   dmarc: 'Zone → DNS → Edit',
   verify: 'Zone → Zone Settings and Zone → Email Routing Rules',
@@ -175,11 +199,38 @@ async function stepRouting(cf: Cloudflare, d: DomainRow, state: SetupState): Pro
   return foreign.length ? `Enabled; replaced ${foreign.length} old MX record(s).` : 'Enabled.';
 }
 
-async function stepCatchAll(cf: Cloudflare, d: DomainRow, workerName: string): Promise<string> {
+async function stepRelay(cf: Cloudflare, env: Env, settings: AppSettings, d: DomainRow, appBase: string | null): Promise<string> {
+  if (!d.account_id) return 'Not needed: the domain is in this Worker\'s account.';
+  if (!appBase) throw new Error("OpenInbox doesn't know its own web address yet. Set the App address in Admin → Settings, then retry.");
+  await installRelay(cf, env, settings, d.account_id, appBase);
+  return `Installed the ${relayWorkerName(settings)} Worker there; it passes mail to ${appBase.replace(/\/+$/, '')}.`;
+}
+
+// The owner's first mailbox: where a domain's mail goes when nothing else is set up for it.
+export async function ownerMailbox(db: D1Database): Promise<{ id: number; address: string } | null> {
+  return first<{ id: number; address: string }>(
+    db,
+    `SELECT m.id, m.address FROM mailboxes m JOIN mailbox_members mm ON mm.mailbox_id = m.id JOIN users u ON u.id = mm.user_id
+     WHERE u.role = 'owner' AND u.status = 'active' ORDER BY m.created_at LIMIT 1`,
+  );
+}
+
+async function stepCatchAll(cf: Cloudflare, db: D1Database, d: DomainRow, workerName: string): Promise<string> {
   const rule = await getCatchAll(cf, d.zone_id);
   if (catchAllTargetsWorker(rule, workerName)) return 'Already routed to OpenInbox.';
   await setCatchAllToWorker(cf, d.zone_id, workerName);
-  return `All mail for ${d.name} now goes to the ${workerName} Worker.`;
+  let message = d.account_id ? `All mail for ${d.name} now goes to OpenInbox through the ${workerName} Worker.` : `All mail for ${d.name} now goes to the ${workerName} Worker.`;
+  // Mail to any address used to arrive somewhere (forwarded, or another Worker): keep it arriving,
+  // in the owner's mailbox, instead of bouncing until mailboxes exist.
+  const before = rule?.enabled ? rule.actions.find((a) => a.type !== 'drop') : undefined;
+  if (before && !d.catch_all_mailbox_id) {
+    const box = await ownerMailbox(db);
+    if (box) {
+      await run(db, 'UPDATE domains SET catch_all_mailbox_id = ? WHERE id = ? AND catch_all_mailbox_id IS NULL', box.id, d.id);
+      message += ` Mail to any address went to ${before.value?.join(', ') || `a ${before.type} rule`} before; it now arrives in ${box.address}.`;
+    }
+  }
+  return message;
 }
 
 async function stepDmarc(cf: Cloudflare, d: DomainRow): Promise<string> {
@@ -212,21 +263,25 @@ async function stepVerify(cf: Cloudflare, d: DomainRow, workerName: string): Pro
     : 'Ready to receive mail.';
 }
 
-export async function runDomainStep(env: Env, settings: AppSettings, domainId: number, stepId?: StepId) {
+// appBase: the address the app is reached at, which a relay passes mail to.
+export async function runDomainStep(env: Env, settings: AppSettings, domainId: number, stepId?: StepId, opts: { appBase?: string } = {}) {
   const cf = await requireCf(env, settings);
-  const { workerName } = requireWorker(settings);
+  requireWorker(settings);
   let d = await getDomain(env.DB, domainId);
+  const workerName = mailWorker(settings, d)!;
   const state = parseJson<SetupState>(d.setup_state, { steps: {} });
-  const step = stepId ?? DOMAIN_STEPS.find((s) => state.steps[s.id]?.status !== 'done' && state.steps[s.id]?.status !== 'skipped')?.id;
-  if (!step) return { domain: d, ...domainStatePayload(d) };
+  const steps = stepsFor(d);
+  const step = stepId ?? steps.find((s) => state.steps[s.id]?.status !== 'done' && state.steps[s.id]?.status !== 'skipped')?.id;
+  if (!step || !steps.some((s) => s.id === step)) return { domain: d, ...domainStatePayload(d) };
   try {
     let message: string;
     if (step === 'routing') message = await stepRouting(cf, d, state);
-    else if (step === 'catchall') message = await stepCatchAll(cf, d, workerName);
+    else if (step === 'relay') message = await stepRelay(cf, env, settings, d, opts.appBase ?? settings.appUrl);
+    else if (step === 'catchall') message = await stepCatchAll(cf, env.DB, d, workerName);
     else if (step === 'dmarc') message = await stepDmarc(cf, d);
     else message = await stepVerify(cf, d, workerName);
     state.steps[step] = { status: 'done', message, at: Date.now() };
-    const allDone = DOMAIN_STEPS.every((s) => state.steps[s.id]?.status === 'done' || state.steps[s.id]?.status === 'skipped');
+    const allDone = steps.every((s) => state.steps[s.id]?.status === 'done' || state.steps[s.id]?.status === 'skipped');
     await saveState(env.DB, d, state, allDone ? 'active' : undefined);
   } catch (e) {
     if (e instanceof RoutingSettling) {
@@ -274,7 +329,7 @@ export interface DomainHealth {
 export async function checkDomainHealth(env: Env, settings: AppSettings, domainId: number): Promise<DomainHealth> {
   const cf = await requireCf(env, settings);
   const d = await getDomain(env.DB, domainId);
-  const workerName = settings.cfWorkerName ?? '';
+  const workerName = mailWorker(settings, d) ?? '';
   const items: HealthItem[] = [];
   const records = await listRecords(cf, d.zone_id);
   const at = (name: string) => records.filter((r) => r.name.toLowerCase() === name.toLowerCase());
@@ -309,6 +364,7 @@ export async function checkDomainHealth(env: Env, settings: AppSettings, domainI
   } catch (e) {
     items.push({ key: 'routing', label: 'Email Routing', status: 'error', detail: e instanceof Error ? e.message : String(e) });
   }
+  if (d.account_id) items.push(await relayHealth(cf, settings, d.account_id));
 
   const spf = at(d.name).filter((r) => r.type === 'TXT' && isSpf(r.content));
   const providerIncludes = await providerSpfIncludes(env.DB, d.id);
@@ -379,6 +435,19 @@ export async function checkDomainHealth(env: Env, settings: AppSettings, domainI
   return health;
 }
 
+async function relayHealth(cf: Cloudflare, settings: AppSettings, accountId: string): Promise<HealthItem> {
+  const label = 'Relay Worker';
+  try {
+    const relay = await relayState(cf, settings, accountId);
+    const want = settings.appUrl?.replace(/\/+$/, '');
+    if (!relay.installed) return { key: 'relay', label, status: 'error', detail: `${relayWorkerName(settings)} is missing from the domain's Cloudflare account. Repair installs it.` };
+    if (want && relay.url !== want) return { key: 'relay', label, status: 'warn', detail: `Passes mail to ${relay.url}, not ${want}. Repair updates it.` };
+    return { key: 'relay', label, status: 'ok', detail: `Passes mail to ${relay.url}.` };
+  } catch (e) {
+    return { key: 'relay', label, status: 'error', detail: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 async function providerSpfIncludes(db: D1Database, domainId: number): Promise<string[]> {
   const rows = await all<{ records: string }>(db, 'SELECT records FROM provider_domains WHERE domain_id = ?', domainId);
   return rows.flatMap((r) =>
@@ -392,6 +461,7 @@ export async function attachAppDomain(env: Env, settings: AppSettings, domainId:
   const cf = await requireCf(env, settings);
   const { accountId, workerName } = requireWorker(settings);
   const d = await getDomain(env.DB, domainId);
+  if (d.account_id) throw badRequest(`${d.name} is in another Cloudflare account, so it can't open the app. Use a domain in this Worker's account.`);
   if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/i.test(sub)) throw badRequest('Use letters, digits and dashes for the subdomain.');
   const hostname = `${sub.toLowerCase()}.${d.name}`;
   const existing = await cf.paginate<CfDnsRecord>(`/zones/${d.zone_id}/dns_records?name=${encodeURIComponent(hostname)}`, 50, 1);
@@ -406,13 +476,18 @@ export async function deleteDomain(env: Env, settings: AppSettings, domainId: nu
   const used = await first<{ n: number }>(env.DB, 'SELECT COUNT(*) AS n FROM mailboxes WHERE domain_id = ?', d.id);
   if (used && used.n > 0) throw conflict('Delete or move the mailboxes on this domain first.');
   const cf = await cfFromEnv(env, settings);
-  if (cf && settings.cfWorkerName) {
+  const worker = mailWorker(settings, d);
+  if (cf && worker) {
     try {
       const rule = await getCatchAll(cf, d.zone_id);
-      if (catchAllTargetsWorker(rule, settings.cfWorkerName)) await disableCatchAll(cf, d.zone_id);
+      if (catchAllTargetsWorker(rule, worker)) await disableCatchAll(cf, d.zone_id);
     } catch {
       // The zone may be gone already; deleting the row is still right.
     }
   }
   await run(env.DB, 'DELETE FROM domains WHERE id = ?', d.id);
+  // The relay goes with the last domain of its account.
+  if (cf && d.account_id && settings.cfWorkerName && !(await first(env.DB, 'SELECT id FROM domains WHERE account_id = ? LIMIT 1', d.account_id))) {
+    await removeRelay(cf, settings, d.account_id).catch(() => undefined);
+  }
 }

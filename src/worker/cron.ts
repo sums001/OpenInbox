@@ -13,6 +13,7 @@ import { checkDomainHealth } from './services/domains';
 import { checkForUpdate } from './services/updates';
 import { logError } from './lib/log';
 import { refreshSenderLogos } from './services/sender-logos';
+import { addNewZones, advancePendingDomains, pruneSkipped } from './services/auto-domains';
 
 async function safely(name: string, fn: () => Promise<unknown>): Promise<void> {
   try {
@@ -29,6 +30,7 @@ export async function handleScheduled(controller: ScheduledController, env: Env)
     await safely('purge', () => purgeOldTrash(env));
     await safely('cleanup', () => cleanup(env));
     await safely('updates', () => checkForUpdate(env, true));
+    await safely('domains-skipped', () => pruneSkipped(env.DB));
     const domains = await all<{ id: number }>(env.DB, "SELECT id FROM domains WHERE status != 'disabled' LIMIT 5");
     for (const d of domains) await safely('health', () => checkDomainHealth(env, settings, d.id));
     return;
@@ -44,4 +46,12 @@ export async function handleScheduled(controller: ScheduledController, env: Env)
   // Up to 25 lookups, so on their own minute: they don't share the free plan's 50 subrequests
   // per invocation with the 10-minute jobs above.
   if (minute % 10 === 5 && settings.senderLogos === 'on') await safely('sender-logos', () => refreshSenderLogos(env));
+  // Domains, on minutes of their own for the same reason: once an hour, zones new in the Cloudflare
+  // accounts are added; every other free minute, a few setup steps of domains still being set up.
+  if (minute % 10 === 0 || minute % 10 === 5) return;
+  if (minute === 33) {
+    if (settings.autoDomains === 'on') await safely('domains-new', () => addNewZones(env, settings));
+  } else {
+    await safely('domains-setup', () => advancePendingDomains(env, settings));
+  }
 }

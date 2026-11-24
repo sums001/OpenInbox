@@ -1,17 +1,18 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { ArrowLeft, Check, ChevronDown, CircleCheck, CircleDashed, CircleX, Cloud, Download, ExternalLink, KeyRound, LoaderCircle, Mail, RefreshCw, ShieldCheck, Sparkles, TriangleAlert, X } from 'lucide-react';
-import { ApiError, errorText, get, post } from '../../lib/api';
+import { ApiError, errorText, get, patch, post } from '../../lib/api';
 import { cn, downloadBlob } from '../../lib/utils';
 import { runDomainSetup } from '../../lib/domain-setup';
-import { ACCOUNT_TOKENS_URL, tokenTemplateUrl, TOKEN_PERMISSIONS } from '../../../shared/constants';
+import { USER_TOKENS_URL, tokenTemplateUrl, TOKEN_PERMISSIONS } from '../../../shared/constants';
 import type { DomainSetupStep, PermissionCheck, ZoneInspection } from '../../lib/types';
 import { LogoMark } from '../../components/Logo';
 import { Button } from '../../components/ui/button';
 import { Checkbox, Field, Input, PasswordInput, Select } from '../../components/ui/form';
 import { Alert, Badge, Card, CopyButton } from '../../components/ui/misc';
 import { PasswordStrength } from '../../components/PasswordStrength';
+import { AutoAddDomains } from '../../components/AutoAddDomains';
 
 interface Check {
   ok: boolean;
@@ -32,11 +33,12 @@ interface SetupStatus {
     zones: Check & { count: number };
   };
   permissions: PermissionCheck[];
-  // usable: whether the token can manage the zone (null: not checked).
-  zones: { id: string; name: string; status: string; usable: boolean | null }[];
+  // usable: whether the token can manage the zone (null: not checked). account: set for a zone in
+  // another account than the Worker's (set up through a relay, after the first domain).
+  zones: { id: string; name: string; status: string; usable: boolean | null; account: string | null }[];
 }
 
-type Stage = 'checks' | 'admin' | 'domain' | 'done';
+type Stage = 'checks' | 'admin' | 'domain' | 'others' | 'done';
 
 export function SetupPage() {
   const [stage, setStage] = useState<Stage>('checks');
@@ -73,8 +75,9 @@ export function SetupPage() {
     { id: 'checks', label: 'Connect Cloudflare' },
     { id: 'admin', label: 'Create your account' },
     { id: 'domain', label: 'Set up mail' },
+    { id: 'others', label: 'All your domains' },
   ];
-  const current = stage === 'done' ? 3 : steps.findIndex((s) => s.id === stage);
+  const current = stage === 'done' ? steps.length : steps.findIndex((s) => s.id === stage);
 
   return (
     <div className="min-h-full bg-bg">
@@ -115,7 +118,7 @@ export function SetupPage() {
         )}
         {stage === 'admin' && status.data && (
           <AdminStage
-            zones={status.data.zones.filter((z) => z.usable !== false)}
+            zones={status.data.zones.filter((z) => z.usable !== false && !z.account)}
             keyState={status.data.checks.encryptionKey.state}
             onBack={() => setStage('checks')}
             onClaimed={(c) => {
@@ -124,7 +127,8 @@ export function SetupPage() {
             }}
           />
         )}
-        {stage === 'domain' && claim && <DomainStage claim={claim} onDone={() => setStage('done')} />}
+        {stage === 'domain' && claim && <DomainStage claim={claim} onDone={() => setStage('others')} />}
+        {stage === 'others' && claim && <OtherDomainsStage claim={claim} onDone={() => setStage('done')} />}
         {stage === 'done' && claim && <DoneStage address={claim.address} />}
       </div>
     </div>
@@ -440,9 +444,12 @@ function ChecksStage({
                       {status!.zones
                         .filter((z) => z.usable !== false)
                         .map((z) => (
-                          <Badge key={z.id}>{z.name}</Badge>
+                          <Badge key={z.id}>{z.account ? `${z.name} · ${z.account}` : z.name}</Badge>
                         ))}
                     </div>
+                  )}
+                  {c!.zones.ok && status!.zones.some((z) => z.account) && (
+                    <div className="mt-1.5 text-xs text-muted">Domains in your other accounts are set up after your first domain, through a small relay Worker in their account.</div>
                   )}
                   <NotCovered zones={status!.zones.filter((z) => z.usable === false).map((z) => z.name)} />
                   {!c!.zones.ok && c!.zones.count === 0 && (
@@ -648,7 +655,7 @@ function TokenForm({
             <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface text-[11px] font-semibold text-muted ring-1 ring-border">1</span>
             <div className="min-w-0 flex-1">
               <div className="text-[13px] font-medium">Create a token</div>
-              <div className="mt-0.5 text-[12.5px] text-muted">The link opens Cloudflare with the permissions filled in. Choose your account and domains, then create the token and copy it.</div>
+              <div className="mt-0.5 text-[12.5px] text-muted">The link opens Cloudflare with every permission filled in, for all your accounts and domains. Create the token and copy it.</div>
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                 <a href={tokenTemplateUrl()} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[13px] font-medium text-primary-fg hover:bg-primary-hover">
                   <Cloud className="h-4 w-4" /> Create token <ExternalLink className="h-3.5 w-3.5" />
@@ -656,7 +663,7 @@ function TokenForm({
                 <button type="button" className="inline-flex items-center gap-1 text-[12.5px] text-muted hover:text-fg" onClick={() => setShowPerms((s) => !s)} aria-expanded={showPerms}>
                   What it can do <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', showPerms && 'rotate-180')} />
                 </button>
-                <a href={ACCOUNT_TOKENS_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12.5px] text-muted hover:text-fg">
+                <a href={USER_TOKENS_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12.5px] text-muted hover:text-fg">
                   API tokens page <ExternalLink className="h-3 w-3" />
                 </a>
               </div>
@@ -904,6 +911,65 @@ function DomainStage({ claim, onDone }: { claim: { domainId: number; address: st
           </div>
         </div>
       )}
+    </Card>
+  );
+}
+
+// Every other domain the token can reach, in all the owner's Cloudflare accounts, then the app on
+// mail.<first domain>. Nothing to fill in: it runs by itself.
+function OtherDomainsStage({ claim, onDone }: { claim: { domainId: number; address: string; domain: string }; onDone: () => void }) {
+  const [app, setApp] = useState<{ state: 'working' | 'done' | 'skipped'; detail: string } | null>(null);
+  const finished = useCallback(async () => {
+    const url = `https://mail.${claim.domain}`;
+    setApp({ state: 'working', detail: `Opening the app at ${url}…` });
+    try {
+      await post(`/admin/domains/${claim.domainId}/app-domain`, { subdomain: 'mail' });
+    } catch (e) {
+      setApp({ state: 'skipped', detail: `The app stays at this address: ${errorText(e)}` });
+      return;
+    }
+    // Cloudflare needs a minute or two for the certificate. An answer of any kind means it is up.
+    for (let i = 0; i < 30; i++) {
+      try {
+        await fetch(`${url}/api/health`, { mode: 'no-cors', cache: 'no-store' });
+        await patch('/admin/settings', { appUrl: url });
+        setApp({ state: 'done', detail: `The app now also opens at ${url}, its address from now on.` });
+        return;
+      } catch {
+        await new Promise((r) => setTimeout(r, 5000));
+      }
+    }
+    setApp({ state: 'done', detail: `Cloudflare is still preparing ${url}. Once it opens, set it as the App address in Admin → Settings.` });
+  }, [claim.domain, claim.domainId]);
+
+  return (
+    <Card className="p-6">
+      <h2 className="text-base font-semibold">All your domains</h2>
+      <p className="mt-1 text-[13px] text-muted">
+        {claim.domain} is ready. OpenInbox now sets up every other domain the token can reach, in all your Cloudflare accounts. Domains in another account get their mail through a small relay Worker there.
+      </p>
+      <div className="mt-5">
+        <AutoAddDomains onFinished={finished} />
+      </div>
+      {app && (
+        <div className="mt-4 flex gap-2.5 text-[13px]">
+          <span className="mt-0.5">
+            {app.state === 'working' ? <LoaderCircle className="h-4 w-4 animate-spin text-primary" /> : app.state === 'done' ? <CircleCheck className="h-4 w-4 text-success" /> : <CircleDashed className="h-4 w-4 text-faint" />}
+          </span>
+          <span className="text-muted">{app.detail}</span>
+        </div>
+      )}
+      <div className="mt-5 flex justify-end gap-2">
+        {app && app.state !== 'working' ? (
+          <Button variant="primary" onClick={onDone}>
+            Continue
+          </Button>
+        ) : (
+          <Button variant="ghost" onClick={onDone}>
+            Skip for now
+          </Button>
+        )}
+      </div>
     </Card>
   );
 }

@@ -17,6 +17,7 @@ interface InstanceSettings {
   spamPolicy: 'spam' | 'reject' | 'off';
   remoteImages: 'block' | 'allow';
   senderLogos: 'off' | 'on';
+  autoDomains: 'off' | 'on';
   appUrl: string | null;
   version: string;
   keyRotation: boolean;
@@ -106,6 +107,15 @@ function GeneralSettings() {
           <Select value={s.senderLogos} onChange={(e) => set('senderLogos', e.target.value as InstanceSettings['senderLogos'])}>
             <option value="off">Off: show initials</option>
             <option value="on">Show senders' logos</option>
+          </Select>
+        </Field>
+        <Field
+          label="New domains in Cloudflare"
+          hint="Checked every hour, in every account the Cloudflare token reaches. A domain whose mail goes to another provider, or that you removed here, is left for you to add."
+        >
+          <Select value={s.autoDomains} onChange={(e) => set('autoDomains', e.target.value as InstanceSettings['autoDomains'])}>
+            <option value="on">Set them up automatically</option>
+            <option value="off">Leave them for me to add</option>
           </Select>
         </Field>
       </div>

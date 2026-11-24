@@ -127,6 +127,7 @@ export const settingsSchema = z.object({
   spamPolicy: z.enum(['spam', 'reject', 'off']).optional(),
   remoteImages: z.enum(['block', 'allow']).optional(),
   senderLogos: z.enum(['off', 'on']).optional(),
+  autoDomains: z.enum(['off', 'on']).optional(),
   appUrl: z.string().trim().url().max(200).optional(),
 });
 
