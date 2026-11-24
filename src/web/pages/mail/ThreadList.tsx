@@ -120,8 +120,15 @@ export function ThreadList({
   const current = Math.min(focusIndex, list.length - 1);
   const currentId = list[current]?.id;
   const listFocused = useRef(false);
-  // (Keyed on focusIndex, not current: the list loading in must not move focus.)
+  // (Keyed on focusIndex, not current: the list loading in must not move focus.) Only a move of
+  // the row takes focus, never the list appearing: rows can already be there on the first render,
+  // when the conversations arrived before the mailboxes, and a page just opened keeps focus where
+  // the browser put it. Hence the pair below, which starts at what the list mounted with.
+  const placed = useRef({ index: focusIndex, activeId });
   useEffect(() => {
+    const prev = placed.current;
+    placed.current = { index: focusIndex, activeId };
+    if (prev.index === focusIndex && prev.activeId === activeId) return;
     const row = container.current?.querySelector<HTMLElement>(`[data-index="${focusIndex}"]`);
     if (!row) return;
     const active = document.activeElement;
