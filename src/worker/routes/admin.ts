@@ -76,6 +76,7 @@ import { retryMessage } from '../services/send';
 import { enforceDmarc, fetchLogo, getSenderLogo, removeSenderLogo, setSenderLogo } from '../services/bimi';
 import { noteRecentSenders } from '../services/sender-logos';
 import { deleteBlobs } from '../services/threads';
+import { forwardDestinations } from '../services/forwarding';
 import { Cloudflare, cfFromEnv, DEFAULT_CF_API } from '../cloudflare/client';
 import { checkPermissions, listZones, verifyToken, zoneAccess } from '../cloudflare/token';
 import { createDestination, deleteDestination, disableRule, listDestinations, listRules } from '../cloudflare/email-routing';
@@ -671,28 +672,7 @@ admin.delete('/blocked/:id', async (c) => {
 
 // Forwarding destinations (Email Routing destination addresses) ---------------------------------
 
-admin.get('/forwarding', async (c) => {
-  const settings = await settingsOf(c);
-  const cf = await cfFromEnv(c.env, settings).catch(() => null);
-  const local = await all<{ address: string; cf_id: string | null; verified_at: number | null }>(c.env.DB, 'SELECT address, cf_id, verified_at FROM forward_destinations ORDER BY address');
-  if (cf && settings.cfAccountId && local.length) {
-    // Refresh verification status from Cloudflare.
-    try {
-      const remote = await listDestinations(cf, settings.cfAccountId);
-      for (const l of local) {
-        const r = remote.find((x) => x.email.toLowerCase() === l.address);
-        const verified = r?.verified ? Date.parse(r.verified) : null;
-        if (verified !== l.verified_at) {
-          await run(c.env.DB, 'UPDATE forward_destinations SET verified_at = ? WHERE address = ?', verified, l.address);
-          l.verified_at = verified;
-        }
-      }
-    } catch {
-      // show the stored status
-    }
-  }
-  return c.json(local.map((l) => ({ address: l.address, verified: !!l.verified_at })));
-});
+admin.get('/forwarding', async (c) => c.json(await forwardDestinations(c.env, await settingsOf(c), 'always')));
 
 admin.post('/forwarding', async (c) => {
   const settings = await settingsOf(c);
