@@ -24,6 +24,7 @@ import { applyFilters, loadFilters, type FilterActions } from './filters';
 import { counterStmt, dailyStatStmt, inboundLogStmt, logInbound } from './stats';
 import { bumpState, type AutoReply } from './mailboxes';
 import { maybeAutoReply } from './autoreply';
+import { nextSeqStmts } from '../db/sequence';
 import { noteSenderStmt, senderDomain } from './sender-logos';
 
 export interface Recipient {
@@ -355,6 +356,7 @@ export async function ingest(c: Context, bytes: Uint8Array, o: IngestOptions): P
     db
       .prepare('INSERT INTO message_bodies (message_id, subject, from_text, to_text, text, html, headers) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .bind(messageId, body.subject, body.fromText, body.toText, body.text, body.html, body.headers),
+    ...nextSeqStmts(db, messageId),
   );
   for (const a of attachments) {
     stmts.push(
