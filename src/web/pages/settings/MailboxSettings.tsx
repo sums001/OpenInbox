@@ -78,8 +78,13 @@ export function MailboxSettings({ section }: { section: MailSection }) {
   );
 }
 
-function useBoxSettings(box: Mailbox) {
-  const q = useQuery({ queryKey: ['box-settings', box.id], queryFn: () => get<BoxSettings>(`/mailboxes/${box.id}/settings`) });
+function useBoxSettings(box: Mailbox, watchPending = false) {
+  const q = useQuery({
+    queryKey: ['box-settings', box.id],
+    queryFn: () => get<BoxSettings>(`/mailboxes/${box.id}/settings`),
+    // Forwarding: the owner of a new address clicks the verification link in another tab or app.
+    refetchOnWindowFocus: watchPending ? (query) => !!query.state.data?.destinations.some((d) => !d.verified) : false,
+  });
   const [s, setS] = useState<BoxSettings | null>(null);
   const { run, busy } = useAction();
   const invalidate = useInvalidate();
@@ -160,7 +165,7 @@ function AutoReply({ box }: { box: Mailbox }) {
 }
 
 function Forwarding({ box }: { box: Mailbox }) {
-  const { s, setS, save, busy } = useBoxSettings(box);
+  const { s, setS, save, busy } = useBoxSettings(box, true);
   if (!s) return <PageSpinner />;
   return (
     <Card>

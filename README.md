@@ -74,6 +74,7 @@ OpenInbox is built for everyday conversations. It is not a bulk or marketing sen
 - Receive on any domain in your Cloudflare account. Email Routing is set up for you.
 - Send through Resend, Brevo, Mailjet, Cloudflare Email Sending or any SMTP server. When one provider hits its free limit, mail falls back to another.
 - Threads, All Mail, search (`from:` `has:attachment` `before:`), labels, filters, snooze, scheduled and undo send.
+- Forwarding: keep the mail here and forward a copy to Gmail or any other address. Cloudflare does the forwarding, so it doesn't use your sending quota.
 - Command palette and keyboard shortcuts that work with screen readers, dark mode, mobile layout.
 
 **Teams**
@@ -234,6 +235,7 @@ If your copy was created before automatic updates were removed, its workflow sti
 | --- | --- |
 | Mail not arriving or not sending | Start with **Admin → Domains → Check health** and **Admin → Mail flow** |
 | No logo next to my mail | Mail apps show a [BIMI](https://bimigroup.org/) logo only when the domain's DMARC policy is `p=quarantine` or `p=reject`; **Admin → Domains → Sender logo** shows what is missing. Gmail and Apple Mail also need a mark certificate (VMC or CMC). Without one, Gmail may show the photo of a Google Account created for that address |
+| A forwarding address stays **Pending** | Its owner has to click the link in Cloudflare's verification email. If adding the address fails, the API token needs **Account → Email Routing Addresses → Edit** |
 | Locked out of the owner account | On the sign-in page, choose **Owner locked out?** and enter the owner email and your recovery key |
 | "A repository with that name already exists" on the Deploy form | An earlier deploy already made that repo. Change **Project name**, or [update](#updating) the existing instance instead |
 

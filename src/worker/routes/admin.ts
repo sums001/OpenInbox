@@ -76,6 +76,7 @@ import { retryMessage } from '../services/send';
 import { enforceDmarc, fetchLogo, getSenderLogo, removeSenderLogo, setSenderLogo } from '../services/bimi';
 import { noteRecentSenders } from '../services/sender-logos';
 import { deleteBlobs } from '../services/threads';
+import { forwardDestinations } from '../services/forwarding';
 import { Cloudflare, cfFromEnv, DEFAULT_CF_API } from '../cloudflare/client';
 import { checkPermissions, listZones, verifyToken, zoneAccess } from '../cloudflare/token';
 import { createDestination, deleteDestination, disableRule, listDestinations, listRules } from '../cloudflare/email-routing';
@@ -465,17 +466,20 @@ admin.get('/storage', async (c) => {
   const summary = await storageSummary(c.env, settings);
   let r2Enabled: boolean | null = null;
   let bucketPermission = false;
+  // The account's buckets, so the bucket step shows done once it exists (before its keys are in).
+  let buckets: string[] = [];
   const cf = await cfFromEnv(c.env, settings).catch(() => null);
   if (cf && settings.cfAccountId) {
     try {
-      await cf.get(`/accounts/${settings.cfAccountId}/r2/buckets`);
+      const list = await cf.get<{ buckets?: { name: string }[] }>(`/accounts/${settings.cfAccountId}/r2/buckets`);
+      buckets = (list?.buckets ?? []).map((b) => b.name);
       r2Enabled = true;
       bucketPermission = true;
     } catch (e) {
       r2Enabled = /10042|enable R2/i.test(errorMessage(e)) ? false : null;
     }
   }
-  return c.json({ ...(await r2Info(c, settings)), summary, r2Enabled, bucketPermission, accountId: settings.cfAccountId });
+  return c.json({ ...(await r2Info(c, settings)), summary, r2Enabled, bucketPermission, buckets, accountId: settings.cfAccountId });
 });
 
 admin.post('/storage/bucket', async (c) => {
@@ -668,28 +672,7 @@ admin.delete('/blocked/:id', async (c) => {
 
 // Forwarding destinations (Email Routing destination addresses) ---------------------------------
 
-admin.get('/forwarding', async (c) => {
-  const settings = await settingsOf(c);
-  const cf = await cfFromEnv(c.env, settings).catch(() => null);
-  const local = await all<{ address: string; cf_id: string | null; verified_at: number | null }>(c.env.DB, 'SELECT address, cf_id, verified_at FROM forward_destinations ORDER BY address');
-  if (cf && settings.cfAccountId && local.length) {
-    // Refresh verification status from Cloudflare.
-    try {
-      const remote = await listDestinations(cf, settings.cfAccountId);
-      for (const l of local) {
-        const r = remote.find((x) => x.email.toLowerCase() === l.address);
-        const verified = r?.verified ? Date.parse(r.verified) : null;
-        if (verified !== l.verified_at) {
-          await run(c.env.DB, 'UPDATE forward_destinations SET verified_at = ? WHERE address = ?', verified, l.address);
-          l.verified_at = verified;
-        }
-      }
-    } catch {
-      // show the stored status
-    }
-  }
-  return c.json(local.map((l) => ({ address: l.address, verified: !!l.verified_at })));
-});
+admin.get('/forwarding', async (c) => c.json(await forwardDestinations(c.env, await settingsOf(c), 'always')));
 
 admin.post('/forwarding', async (c) => {
   const settings = await settingsOf(c);

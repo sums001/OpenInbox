@@ -33,6 +33,7 @@ import {
   type ThreadAction,
 } from '../services/threads';
 import { getMailbox, mailboxSettings, updateMailbox, bumpState } from '../services/mailboxes';
+import { forwardDestinations } from '../services/forwarding';
 import { attachmentBytes } from '../services/send';
 import { contentDisposition, isInlineSafe } from '../mail/decode';
 import { storeFor } from '../storage';
@@ -464,8 +465,9 @@ mail.get('/mailboxes/:id/settings', async (c) => {
   const mailboxId = intParam(c, 'id');
   await assertMailbox(c.env.DB, currentUser(c), mailboxId);
   const m = await getMailbox(c.env.DB, mailboxId);
-  const destinations = await all<{ address: string; verified_at: number | null }>(c.env.DB, 'SELECT address, verified_at FROM forward_destinations ORDER BY address');
-  return c.json({ ...mailboxSettings(m), displayName: m.display_name, destinations: destinations.map((d) => ({ address: d.address, verified: !!d.verified_at })) });
+  // The owner of a new address verifies it in their own mail, then comes back here.
+  const destinations = await forwardDestinations(c.env, await loadSettings(c.env.DB), 'pending');
+  return c.json({ ...mailboxSettings(m), displayName: m.display_name, destinations });
 });
 
 mail.patch('/mailboxes/:id/settings', async (c) => {
