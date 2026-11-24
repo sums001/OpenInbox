@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Check, CircleCheck, CircleDashed, CircleX, Ellipsis, ExternalLink, Globe, ImageUp, ListChecks, LoaderCircle, Lock, Plus, RefreshCw, RotateCw, Trash2, TriangleAlert, Wrench, X } from 'lucide-react';
+import { Check, CircleCheck, CircleDashed, CircleX, Ellipsis, ExternalLink, Globe, ImageUp, ListChecks, LoaderCircle, Lock, Plus, RefreshCw, RotateCw, Route, Trash2, TriangleAlert, Wrench, X } from 'lucide-react';
 import { del, get, patch, post, put, errorText } from '../../lib/api';
 import { timeAgo } from '../../lib/format';
 import { useAction, useInvalidate } from '../../lib/hooks';
@@ -26,7 +26,7 @@ export function DomainsPage() {
     <div className="flex flex-col gap-5">
       <PageHeader
         title="Domains"
-        description="Domains in your Cloudflare account that receive mail here. Everything is set up through the Cloudflare API, and you can re-run or repair setup from this page at any time."
+        description="Domains in your Cloudflare accounts that receive mail here. Everything is set up through the Cloudflare API, and you can re-run or repair setup from this page at any time."
         actions={
           <Button variant="primary" icon={<Plus className="h-[15px] w-[15px]" />} onClick={() => setAdding(true)}>
             Add a domain
@@ -141,6 +141,11 @@ function DomainCard({ domain: d, mailboxes, providers, onChanged }: { domain: Do
             <Status icon={sendState === 'ok' ? <CircleCheck className="text-success" /> : sendState === 'pending' ? <CircleDashed className="text-warning" /> : <CircleX className="text-faint" />}>
               {sendState === 'ok' ? 'Sending' : sendState === 'pending' ? 'Sending pending' : 'Not sending'}
             </Status>
+            {d.relayed && (
+              <span title="This domain is in another Cloudflare account. Its mail reaches OpenInbox through the relay Worker there.">
+                <Status icon={<Route className="text-faint" />}>Through a relay</Status>
+              </span>
+            )}
             {health && (
               <Status icon={!issues.length ? <CircleCheck className="text-success" /> : errors.length ? <CircleX className="text-danger" /> : <TriangleAlert className="text-warning" />}>
                 {!issues.length ? 'DNS records' : `${issues.length} ${issues.length === 1 ? 'issue' : 'issues'}`}
@@ -235,7 +240,9 @@ function DomainCard({ domain: d, mailboxes, providers, onChanged }: { domain: Do
           </Select>
         </Field>
         <Field label="Use your own address for the web app" hint="Cloudflare creates the DNS record and certificate. The workers.dev address keeps working.">
-          {d.appHostname ? (
+          {d.relayed ? (
+            <div className="text-[13px] text-muted">Only a domain in the Worker&apos;s own Cloudflare account can open the app.</div>
+          ) : d.appHostname ? (
             <div className="flex h-9 items-center gap-2 rounded-lg border border-border px-3 text-[13px]">
               <a href={`https://${d.appHostname}`} target="_blank" rel="noreferrer" className="flex min-w-0 flex-1 items-center gap-1.5 truncate hover:underline">
                 {d.appHostname}
@@ -618,7 +625,8 @@ function AppDomainDialog({ domain, onClose, onDone }: { domain: DomainInfo; onCl
 }
 
 function AddDomainDialog({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
-  const zones = useQuery({ queryKey: ['admin', 'zones'], queryFn: () => get<{ id: string; name: string; status: string; connected: boolean; usable: boolean | null }[]>('/admin/zones') });
+  // account: the Cloudflare account's name, for a zone in another account than the Worker's.
+  const zones = useQuery({ queryKey: ['admin', 'zones'], queryFn: () => get<{ id: string; name: string; status: string; connected: boolean; usable: boolean | null; account: string | null }[]>('/admin/zones') });
   const all = zones.data ?? [];
   const available = all.filter((z) => !z.connected && z.usable !== false);
   const [zoneId, setZoneId] = useState('');
@@ -698,7 +706,7 @@ function AddDomainDialog({ onClose, onAdded }: { onClose: () => void; onAdded: (
       open
       onClose={onClose}
       title="Add a domain"
-      description="Pick one of the zones on your Cloudflare account. OpenInbox turns on Email Routing, routes its mail here and adds DMARC if it's missing."
+      description="Pick one of the zones the Cloudflare token can see. OpenInbox turns on Email Routing, routes its mail here and adds DMARC if it's missing."
       footer={
         available.length ? (
           <>
@@ -718,7 +726,7 @@ function AddDomainDialog({ onClose, onAdded }: { onClose: () => void; onAdded: (
         <EmptyState icon={<Globe />} tone="warning" title="No more domains">
           {all.some((z) => !z.connected)
             ? `The Cloudflare token can't manage ${all.filter((z) => !z.connected).map((z) => z.name).join(', ')}. Add ${all.filter((z) => !z.connected).length === 1 ? 'it' : 'them'} to the token's zone resources in Cloudflare, then come back.`
-            : 'Every zone on this Cloudflare account is already connected. Add a new domain to Cloudflare first, then come back.'}
+            : 'Every zone the Cloudflare token can see is already connected. Add a new domain to Cloudflare first, then come back.'}
         </EmptyState>
       ) : (
         <div className="flex flex-col gap-2">
@@ -742,6 +750,7 @@ function AddDomainDialog({ onClose, onAdded }: { onClose: () => void; onAdded: (
                   <span className="block text-[13.5px] font-medium">{z.name}</span>
                   {desc && <span className="block truncate text-xs text-muted">{desc}</span>}
                 </span>
+                {z.account && <span className="max-w-[40%] shrink-0 truncate rounded-full bg-surface-2 px-2 py-0.5 text-[11.5px] font-medium text-muted">{z.account}</span>}
                 {on && mx?.mxState === 'other' && <span className="rounded-full bg-warning-soft px-2 py-0.5 text-[11.5px] font-medium text-warning">MX elsewhere</span>}
               </button>
             );
@@ -767,6 +776,11 @@ function AddDomainDialog({ onClose, onAdded }: { onClose: () => void; onAdded: (
               </div>
               <Checkbox checked={replaceMx} onChange={setReplaceMx} label="Replace them and move this domain's mail to OpenInbox" />
             </div>
+          )}
+          {mx?.relayed && (
+            <Alert tone="neutral">
+              {mx.name} is in your “{mx.account?.name}” Cloudflare account. Email Routing there can only hand mail to a Worker in the same account, so OpenInbox installs a small relay Worker in it that passes each message here.
+            </Alert>
           )}
           {!!mx?.conflicts.length && <Alert tone="neutral">{mx.conflicts.map((c) => c.address).join(', ')} have their own routing rules and will bypass OpenInbox until disabled.</Alert>}
           <p className="mt-1 text-xs text-faint">You can re-run or repair setup from this page at any time.</p>
