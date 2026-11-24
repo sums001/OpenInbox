@@ -465,17 +465,20 @@ admin.get('/storage', async (c) => {
   const summary = await storageSummary(c.env, settings);
   let r2Enabled: boolean | null = null;
   let bucketPermission = false;
+  // The account's buckets, so the bucket step shows done once it exists (before its keys are in).
+  let buckets: string[] = [];
   const cf = await cfFromEnv(c.env, settings).catch(() => null);
   if (cf && settings.cfAccountId) {
     try {
-      await cf.get(`/accounts/${settings.cfAccountId}/r2/buckets`);
+      const list = await cf.get<{ buckets?: { name: string }[] }>(`/accounts/${settings.cfAccountId}/r2/buckets`);
+      buckets = (list?.buckets ?? []).map((b) => b.name);
       r2Enabled = true;
       bucketPermission = true;
     } catch (e) {
       r2Enabled = /10042|enable R2/i.test(errorMessage(e)) ? false : null;
     }
   }
-  return c.json({ ...(await r2Info(c, settings)), summary, r2Enabled, bucketPermission, accountId: settings.cfAccountId });
+  return c.json({ ...(await r2Info(c, settings)), summary, r2Enabled, bucketPermission, buckets, accountId: settings.cfAccountId });
 });
 
 admin.post('/storage/bucket', async (c) => {
