@@ -7,9 +7,10 @@ import { CSRF_COOKIE } from './session';
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 // CSRF: state-changing requests must come from this origin and echo the CSRF cookie in a header
-// (double submit). Webhooks are exempt; they are authenticated by signatures or secret URLs.
+// (double submit). Webhooks are exempt; they are authenticated by signatures or secret URLs. So is
+// the Inbox API, which ignores cookies and takes only an API key in the Authorization header.
 export const csrfProtection: MiddlewareHandler<AppBindings> = async (c, next) => {
-  if (SAFE_METHODS.has(c.req.method) || c.req.path.startsWith('/api/webhooks/')) return next();
+  if (SAFE_METHODS.has(c.req.method) || c.req.path.startsWith('/api/webhooks/') || c.req.path.startsWith('/api/v1/')) return next();
   const origin = c.req.header('origin');
   const self = new URL(c.req.url).origin;
   if (origin && origin !== self) throw new HttpError(403, 'csrf', 'Cross-site request blocked.');

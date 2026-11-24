@@ -1,14 +1,16 @@
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router';
-import { CalendarClock, Download, Forward, Funnel, MonitorSmartphone, Palette, PenLine, ShieldCheck, Tag, UserRound } from 'lucide-react';
+import { Braces, CalendarClock, Download, Forward, Funnel, MonitorSmartphone, Palette, PenLine, ShieldCheck, Tag, UserRound } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { AppearanceSettings, DevicesSettings, ProfileSettings, SecuritySettings } from './AccountSettings';
 import { MAIL_SECTIONS, MailboxSettings, type MailSection } from './MailboxSettings';
+import { ApiKeysSettings } from './ApiKeysSettings';
 
 const ACCOUNT = [
   { to: 'profile', label: 'Profile', Icon: UserRound, element: <ProfileSettings /> },
   { to: 'appearance', label: 'Appearance', Icon: Palette, element: <AppearanceSettings /> },
   { to: 'security', label: 'Security', Icon: ShieldCheck, element: <SecuritySettings /> },
   { to: 'devices', label: 'Devices', Icon: MonitorSmartphone, element: <DevicesSettings /> },
+  { to: 'api-keys', label: 'API keys', Icon: Braces, element: <ApiKeysSettings /> },
 ];
 
 const MAIL_ICONS: Record<MailSection, typeof UserRound> = {

@@ -29,11 +29,14 @@ export const DEFAULT_SETTINGS = {
   spamRetentionDays: 30,
   spamPolicy: 'spam' as SpamPolicy,
   remoteImages: 'block' as RemoteImagesPolicy,
+  tracking: 'off' as TrackingPolicy,
   senderLogos: 'off' as SenderLogosPolicy,
 };
 
 export type SpamPolicy = 'spam' | 'reject' | 'off';
 export type RemoteImagesPolicy = 'block' | 'allow';
+// Open and click tracking of all mail people send, for the whole instance.
+export type TrackingPolicy = 'off' | 'on';
 // Senders' BIMI logos next to their mail, for the whole instance.
 export type SenderLogosPolicy = 'off' | 'on';
 
@@ -108,6 +111,11 @@ export type LabelColor = (typeof LABEL_COLORS)[number];
 
 export const ROLES = ['owner', 'admin', 'member'] as const;
 export type Role = (typeof ROLES)[number];
+
+// Inbox API key scopes: read mail, send mail, change threads (read state, folders, labels).
+export const API_SCOPES = ['read', 'send', 'modify'] as const;
+export type ApiScope = (typeof API_SCOPES)[number];
+export const API_KEY_PREFIX = 'oik_';
 
 // Cloudflare API token permissions OpenInbox needs. `id` is the permission group ID (from the
 // List permission groups API), which the pre-filled token link uses: the dashboard has no short key

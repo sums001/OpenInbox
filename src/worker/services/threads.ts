@@ -10,6 +10,8 @@ import type { Address } from '../mail/address';
 import { THREAD_FOLDERS, type Folder } from '../../shared/constants';
 import { ftsExpression, hasTextQuery, parseSearch } from '../../shared/search';
 import { bumpState } from './mailboxes';
+import { trackingSummaries } from './tracking';
+import type { TrackingSummary } from '../mail/tracking';
 
 export interface ThreadRow {
   id: number;
@@ -47,6 +49,9 @@ export interface ThreadSummary {
   snoozedUntil: number | null;
   assignedTo: number | null;
   labels: number[];
+  // Sent view only: the status of the conversation's latest message that went out (or failed to),
+  // and whether a person opened it, when open tracking is on.
+  sent?: { status: string; opened: boolean };
 }
 
 const COLUMNS =
@@ -125,7 +130,8 @@ function decodeCursor(cursor: string | null | undefined): { t: number; id: numbe
 
 export async function listThreads(db: D1Database, p: ListParams): Promise<{ threads: ThreadSummary[]; nextCursor: string | null }> {
   const { rows, nextCursor } = await viewPage<ThreadRow>(db, p, COLUMNS);
-  return { threads: await withLabels(db, rows), nextCursor };
+  const threads = await withLabels(db, rows);
+  return { threads: p.view === 'sent' ? await withSentStatus(db, threads) : threads, nextCursor };
 }
 
 // The sort columns are always selected so the next cursor can be built.
@@ -228,6 +234,24 @@ async function viewPage<T extends Pick<ThreadRow, 'id' | 'last_message_at' | 'la
   return { rows: page, nextCursor: more && last ? `${sortKey}.${last.id}` : null };
 }
 
+// One indexed lookup per conversation of the page (messages_thread). Opens count as in the thread
+// view: by a person or a mail provider's image proxy, not Apple Mail's prefetch or scanners.
+async function withSentStatus(db: D1Database, threads: ThreadSummary[]): Promise<ThreadSummary[]> {
+  if (!threads.length) return threads;
+  const rows = await all<{ thread_id: number; status: string; opened: number }>(
+    db,
+    `SELECT m.thread_id, m.status,
+            EXISTS (SELECT 1 FROM tracking_events e WHERE e.message_id = m.id AND e.kind = 'open' AND e.source IN ('human', 'proxy')) AS opened
+       FROM threads t JOIN messages m ON m.id = (
+         SELECT x.id FROM messages x WHERE x.thread_id = t.id AND x.direction = 'out'
+            AND x.status IN ('sending', 'sent', 'delivered', 'bounced', 'complained', 'failed') ORDER BY x.sent_at DESC, x.id DESC LIMIT 1)
+      WHERE t.id IN (${placeholders(threads.length)})`,
+    ...threads.map((t) => t.id),
+  );
+  const byThread = new Map(rows.map((r) => [r.thread_id, { status: r.status, opened: !!r.opened }]));
+  return threads.map((t) => (byThread.has(t.id) ? { ...t, sent: byThread.get(t.id) } : t));
+}
+
 export async function unreadCounts(db: D1Database, mailboxIds: number[]): Promise<Record<number, Record<string, number>>> {
   const out: Record<number, Record<string, number>> = {};
   if (!mailboxIds.length) return out;
@@ -275,6 +299,7 @@ export interface MessageDetail {
   sendAt: number | null;
   messageId: string | null;
   attachments: { id: number; filename: string; contentType: string; size: number; inline: boolean; contentId: string | null; stored: boolean }[];
+  tracking: TrackingSummary | null; // opens and clicks of mail a person sent
 }
 
 interface MessageRow {
@@ -306,18 +331,20 @@ interface MessageRow {
 
 const BODY_BUDGET = 2_500_000;
 
-export async function getThread(db: D1Database, threadId: number) {
+// With messageId, only that message of the thread (the 300-message limit doesn't apply).
+export async function getThread(db: D1Database, threadId: number, messageId?: number) {
   const t = await first<ThreadRow>(db, `SELECT ${COLUMNS} FROM threads WHERE id = ?`, threadId);
   if (!t) throw notFound('Conversation not found.');
   const messages = await all<MessageRow>(
     db,
     `SELECT id, direction, status, message_id, from_addr, from_name, to_addrs, cc_addrs, bcc_addrs, reply_to, delivered_to, subject, snippet, sent_at,
             is_read, truncated, raw_key, spf, dkim, dmarc, spam_reason, list_unsubscribe, error, send_at
-       FROM messages WHERE thread_id = ? ORDER BY CASE WHEN direction = 'in' THEN created_at ELSE sent_at END, id LIMIT 300`,
+       FROM messages WHERE thread_id = ?${messageId ? ' AND id = ?' : ''} ORDER BY CASE WHEN direction = 'in' THEN created_at ELSE sent_at END, id LIMIT 300`,
     threadId,
+    ...(messageId ? [messageId] : []),
   );
   const ids = messages.map((m) => m.id);
-  const [bodies, attachments, labels, notes] = await Promise.all([
+  const [bodies, attachments, labels, notes, tracking] = await Promise.all([
     ids.length
       ? all<{ message_id: number; text: string; html: string | null; size: number }>(
           db,
@@ -339,6 +366,7 @@ export async function getThread(db: D1Database, threadId: number) {
       'SELECT n.id, n.user_id, u.name, n.body, n.created_at FROM thread_notes n LEFT JOIN users u ON u.id = n.user_id WHERE n.thread_id = ? ORDER BY n.created_at',
       threadId,
     ),
+    trackingSummaries(db, messages.filter((m) => m.direction === 'out').map((m) => m.id)),
   ]);
   // Keep the response bounded: newest bodies first, older large HTML bodies load on demand.
   let budget = BODY_BUDGET;
@@ -380,6 +408,7 @@ export async function getThread(db: D1Database, threadId: number) {
       attachments: attachments
         .filter((a) => a.message_id === m.id)
         .map((a) => ({ id: a.id, filename: a.filename, contentType: a.content_type, size: a.size, inline: !!a.inline, contentId: a.content_id, stored: !!a.stored })),
+      tracking: tracking.get(m.id) ?? null,
     };
   });
   return {
